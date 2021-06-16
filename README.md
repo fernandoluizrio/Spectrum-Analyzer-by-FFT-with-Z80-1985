@@ -1,4 +1,4 @@
-# Spectrum-Analyser-by-FFT-with-Z80
+# Spectrum-Analyzer-by-FFT-with-Z80
 
 -------------------------------
 
