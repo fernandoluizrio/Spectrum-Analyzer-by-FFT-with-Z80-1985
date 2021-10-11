@@ -1,0 +1,1708 @@
+              	; --------------------------------------
+              	; zasm: assemble "UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80"
+              	; date: 2021-10-11 20:29:41
+              	; --------------------------------------
+
+
+              	;--------------------------------------------------------------
+              	;
+              	; UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80
+              	;
+              	; Autor: Fernando da Cunha Luiz
+              	;
+              	; 1984/1985
+              	;
+              	; Ultima revisao: 11 de outubro de 2021, pelo autor
+              	;
+              	; Compilado em 2021 com: https://k1.spdns.de/cgi-bin/zasm.cgi
+              	;   https://k1.spdns.de/Develop/Projects/zasm/Documentation/
+              	;   https://clrhome.org/table/
+              	;
+              	; Este software faz parte do Analisador de Espetro por FFT,
+              	; desenvolvido pelo autor, para obtencao do Titulo de 
+              	; Engenheiro Eletronico da Universidade Federal do Rio de 
+              	; Janeiro, apresentado aos examinadores em 12 de marco de 1985.
+              	;
+              	; Este codigo foi reescrito no ano de 2021. O software original
+              	; foi compilado manualmente, com lapis e papel, com auxilio de 
+              	; tabela de codigos em Assembly Z80.
+              	; Foi depurado num microcomputador Z80 compativel com Sinclair
+              	; ZX Spectrum.
+              	; O codigo original foi gravado na EPROM digitando os codigos
+              	; em hexadecimal num terminal ASCII ligado a um gravador de
+              	; EPROM com comunicacao serial, desenvolvido na UFRJ, sendo 
+              	; obtido exito e funcioou como esperado.
+              	; Pode haver alguns erros na redigitacao/transcricao do codigo
+              	; original. As anotações a lapis do codigo original, que foi
+              	; gravado na EPROM, foram perdidas com o tempo, mais de 36 anos
+              	; no momento. Neste codigo ha notas de onde podem haver erros.
+              	;
+              	;--------------------------------------------------------------
+              	;
+              	;   MAPEAMENTO DA MEMORIA (HEXADECIMAL)
+              	;
+              	;   0000 a 07FF - 2KB EPROM 2716
+              	;   0800 a 0FFF - 2KB RAM 6116 (AMOSTRAS DO SINAL / RESULTADO)
+              	;   1000 a 13FF - 1KB RAM 2114 X 2 (STACK E VARIAVEIS)
+              	;   1400 a 17FF - Reservado
+              	;   1800 a 1FFF - Livre
+              	;   2000 a 27FF - Livre
+              	;   2800 a 2FFF - Livre
+              	;   3000 a 37FF - Livre
+              	;   3800 a 3FFF - DISPLAY de 7 Segmentos
+              	;   4000 a FFFF - Reservado, nao decodificado
+              	;
+              	;--------------------------------------------------------------
+              	
+              	;--------------------;  67 DEEL/UFRJ
+              	;
+              	;                  APENDICE 5
+              	;
+              	;   ENDERECOS DA MEMORIA (HEXADECIMAL)
+              	;
+              	;   0000 a 00FF - Rotina de iniciacao e interrupcao
+              	;
+              	;   0100 a 067F - Programa da FFT
+              	;
+              	;   0680 a 07FF - tabela de seno e cosseno multiplicados por
+              	;                 32767, (uint15_t), ([0o .. 270o)),
+              	;                 bit 15 representa o sinal, fim da EPROM
+              	;
+0800:         	AI:       EQU 0800H
+              	;   0800 a 0BFF - A(I) armazenado na representacao com 4 Bytes
+              	;                 em complemento a 2 (int32_t)
+              	;
+              	;   0800 a 08FF - Area para onde eh transferido o conteudo dos
+              	;                 enderecos 1080 a 117F ou 1180 a 127F,
+              	;                 apos o calculo da FFT, a mesma de A(I)
+              	;
+0C00:         	BI:       EQU 0C00H
+              	;   0C00 a 0BFF - B(I) armazenado na representacao com 4 Bytes
+              	;                 em complemento a 2 (int32_t)
+              	;
+0E00:         	MI16:     EQU 0E00H
+              	;   0E00 a 0FFF - Area para guardar o espectro na  represen-
+              	;                 tacao de modulo com 16 bits (uint16_t)
+              	;
+              	;   1000 a 107F - Area de variaveis
+              	;
+              	;   1080 a 117F - Area para guardar o sinal amostrado do
+              	;                 qual foi calculada a FFF, 256 Bytes (int8_t)
+              	;
+1180:         	MI8:      EQU 1180H
+              	;   1180 a 127F - Area para guardar o espectro na represen-
+              	;                 tacao de modulo com 8 bits (uint8_t)
+              	;
+1180:         	MI:       EQU 1180H
+              	;   1180 a 137F - Area utilizada temporariamente para guardar
+              	;                 o modulo com 16 bits (uint16_t)
+              	;
+              	;   1380 - 13FF - Area destinada ao "STACK POINTER"
+              	;
+3800:         	DISPL:     EQU 3800H  ; Endereco do DISPLAY, mapeado em memoria
+              	                      ;           Renomeado de DISP para DISPL
+              	;
+              	;--------------------------------------------------------------
+              	;
+              	;--------------------;  68 DEEL/UFRJ
+              	;
+              	;                  APENDICE 6
+              	;
+              	;      O PROGRAMA DA FFT EM ASSEMBLY
+              	;
+              	;      O programa inclui uma sub-rotina de troca de "pagina". Ca-
+              	; da pagina sao 256 Bytes. Como temos 8 paginas (2048 Bytes) dis-
+              	; poniveis de RAM para acesso direto a memoria, eh   interessante
+              	; que se possa mostrar cada pagina separadamente, para maior  re-
+              	; solucao, principalmente quando estiver sendo usado como memoria
+              	; de osciloscopio. A sub-rotina faz a rotacao de paginas. Eh exe-
+              	; cutada atraves de interrupcao, nao mascaravel, da CPU.
+              	;
+              	;      A rotina de calculo da FFT inclui uma sub-rotina que salva
+              	; o sinal amostrado que esta nos primeiros 256 enderecos da  RAM.
+              	; A rotina da FFT eh executada atraves de uma interrupcao, masca-
+              	; ravel, da CPU.
+              	;
+              	;      Apos ser executada a rotina da FFT, a sub-rotina de  rota-
+              	; cao de pagina nao eh mais executada. Eh executada uma sub-rotina
+              	; que coloca nos primeiros 256 Bytes da RAM, ora o resultado   da
+              	; FFT, ora o sinal amostrado, para cada interrupcao, nao mascara-
+              	; vel, da CPU.
+              	;
+              	;      A rotina da FFT pode ser modificada para o calculo     com
+              	; menor numero de pontos, simplesmente mudando a instrucao    que
+              	; esta no endereco 0100H (LD A, 128).
+              	;
+              	;      Ex.: Para o calculo da FFT com 128 pontos a      instrucao
+              	;      LD A, 128 devera ser substituida por LD A, 64.
+              	;      A Instrucao podera ainda ser substituida por uma instrucao
+              	; de entrada. Ex.: IN A, (porta).
+              	;
+              	;      Nas paginas a seguir esta a listagem comentada do programa
+              	; em ASSEMBLY.
+              	;
+              	;--------------------------------------------------------------
+              	;
+              	;--------------------;  71 DEEL/UFRJ
+              	;
+0000:         	        ORG 0000H
+              	;
+0000: 31FF13  	INICIO: LD SP, 13FFH ; Ultimo End. da RAM     0000 31 FF 13
+              	                     ; p/ SP, a RAM comeca
+              	                     ; no endereco 0800H
+0003: ED56    	        IM 1         ; Seleciona modo 1 da    0003 ED 56
+              	                     ; interrupcao
+0005: FB      	        EI           ; Habilita interrupcao   0005 FB
+0006: 3E3F    	        LD A, 3FH    ; Codigo p/ colocar zero 0006 3E 3F
+              	                     ; no DISPLAY
+0008: 320038  	        LD (DISPL), A; Ascende DISPLAY c zero 0008 32 00 38
+000B: AF      	        XOR A        ; Zera ACC               000B AF
+000C: 326010  	        LD (FLAG), A ; Zera FLAG que indica   000C 32 60 10
+              	                     ; se a FFT foi calculada
+000F: 017F00  	        LD BC, 127   ; Qtd. de BYTES a serem  000F 01 7F 00
+              	                     ; transferidos
+0012: 110108  	        LD DE, 0801H ; End. inicial destino   0012 11 01 08
+0015: 210008  	        LD HL, 0800H ; End. inicial fonte     0015 21 00 08
+0018: 77      	        LD (HL), A   ; Zero p/ conteudo do    0018 77
+              	                     ; End. inicial fonte
+0019: EDB0    	        LDIR         ; Coloca zero nos        0019 ED B0
+              	                     ; primeiros 128 BYTES
+              	                     ; de RAM
+001B: 2F      	        CPL          ; 255 p/ o ACC           001B 2F
+001C: 017F01  	        LD BC, 383   ; Qtd. de BYTES a serem  001C 01 7F 01
+              	                     ; copiados
+001F: 118108  	        LD DE, 0881H ; End. inicial destino   001F 11 81 08
+0022: 218008  	        LD HL, 0880H ; End. inicial fonte     0022 21 80 08
+0025: 77      	        LD (HL), A   ; 255 p/ conteudo do     0025 77
+              	                     ; End. inicial fonte
+0026: EDB0    	        LDIR         ; Coloca 255 nos BYTES   0026 ED B0
+              	                     ; de 129 ate 511 da RAM
+              	
+              	;--------------------;  72 DEEL/UFRJ
+              	
+0028: 3E80    	        LD A, 128    ; 128 p/ o ACC           0028 3E 80
+002A: 017F00  	        LD BC, 127   ; Qtd. de BYTES a serem  002A 01 7F 00
+              	                     ; copiados
+002D: 110109  	        LD DE, 0901H ; End. inicial destino   002D 11 01 09
+0030: 210009  	        LD HL, 0900H ; End. inicial fonte     0030 21 00 09
+0033: 77      	        LD (HL), A   ; 128 p/ conteudo do     0033 77
+              	                     ; End. inicial fonte
+0034: EDB0    	        LDIR         ; Coloca 255 nos BYTES   0034 ED B0
+              	                     ; de 129 ate 511 da RAM
+0036: 180D    	        JR PULA1     ; Continua em PULA1      0036 18 0D
+0038: 3E09    	INT:    LD A,9       ; End. relativo da       0038 3E 09
+              	                     ; tabela do DISPLAY + 1,
+              	                     ; letra 'A'
+003A: 326110  	        LD (PAG), A  ; Guarda End. relativo   003A 32 61 10
+003D: 326010  	        LD (FLAG), A ; Ativa FLAG             003D 32 60 10
+0040: CD0001  	        CALL FFT     ; Executa a FFT e acende 0040 CD 00 01
+              	                     ; o DISPLAY com F ao
+              	                     ; final
+0043: ED4D    	FIMINT: RETI         ; Retorno da interrupcao 0043 ED 4D
+0045: 017E00  	PULA1:  LD BC, 126   ; Qtd. de BYTES a serem  0045 01 7E 00
+              	                     ; copiados
+0048: 118209  	        LD DE, 0982H ; End. inicial destino   0048 11 82 09
+004B: 218009  	        LD HL, 0980H ; End. inicial fonte     004B 21 80 09
+004E: AF      	        XOR A        ; Zera ACC               004E AF
+004F: 77      	        LD (HL), A   ; 0980H contem zero e    004F 77
+              	                     ; 0981H contem 255
+0050: EDB0    	        LDIR         ; Coloca zero nos BYTES  0050 ED B0
+              	                     ; pares e 255 nos BYTES
+              	                     ; impares a partir do
+              	                     ; endereco 384 ate 511
+              	                     ; da RAM
+0052: 00      	        NOP          ;                        0052 00
+              	
+              	;--------------------;  73 DEEL/UFRJ
+              	
+0053: 00      	        NOP          ;                        0053 00
+0054: 010006  	        LD BC, 1536  ; Qtd. de BYTES a        0054 01 00 06
+              	                     ; transferir, 6 paginas
+0057: 11000A  	        LD DE, 0A00h ; End. inicial destino   0057 11 00 0A
+005A: 210008  	        LD HL, 0800H ; End. inicial fonte     005A 21 00 08
+005D: EDB0    	        LDIR         ; Copia o conteudo dos   005D ED B0
+              	                     ; primeiros 512 BYTES
+              	                     ; da RAM p/ os proximos
+              	                     ; 1536 BYTES da RAM
+005F: AF      	        XOR A        ; Zera ACC               005F AF
+0060: 326110  	        LD (PAG), A  ; Zera End. relativo da  0060 32 61 10
+              	                     ; tabela do DISPLAY
+              	
+              	;--------------------;
+              	
+0063: 76      	PARE:   HALT         ; Para a CPU e libera o  0063 76
+              	                     ; barramento por hardware
+0064: 18FD    	        JR PARE      ; Apos executada uma     0064 18 FD
+              	                     ; interrupcao volta ao
+              	                     ; estado anterior
+              	
+              	;--------------------;
+              	
+0066: 3A6010  	NMI:    LD A, (FLAG) ; Se FLAG diferente de   0066 3A 60 10
+              	                     ; zero a FFT ja foi
+              	                     ; calculada
+0069: B7      	        OR A         ; Verifica se ja foi     0069 B7
+              	                     ; calculada a FFT
+006A: 2005    	        JR NZ, PULA2 ; Se ja calculada, pula  006A 20 05
+              	
+              	                     ; Uma pagina = 256 BYTES
+006C: CD7C00  	        CALL TROCA8  ; Faz a rotacao das      006C CD 7C 00
+              	                     ; primeiras 8 paginas da
+              	                     ; RAM, carrossel
+006F: 1803    	        JR PULA3     ;                        006F 18 03
+0071: CDAB00  	PULA2:  CALL TROCA2  ; Coloca o End. inicial  0071 CD AB 00
+              	                     ; da RAM, o espectro ou
+              	                     ; o sinal amostrado
+0074: CDCD00  	PULA3:  CALL DISPLAY ; Indica qual a pagina   0074 CD CD 00
+              	                     ; da RAM, esta' na pagina
+              	                     ; zero ou se e' o
+              	
+              	;--------------------;  74 DEEL/UFRJ
+              	
+              	                     ; espectro ou o sinal
+              	                     ; amostrado do qual foi
+              	                     ; calculado a FFT
+0077: CDDA00  	        CALL ESPERA  ; Chama rotina para      0077 CD DA 00
+              	                     ; DEBOUNCE, espera
+              	                     ; 426 milissegundos
+007A: ED45    	FIMNMI: RETN         ; Fim da NMI             007A ED 45
+              	
+              	;--------------------;
+              	
+007C: 010001  	TROCA8: LD BC, 256   ; Qtd. de BYTES a        007C 01 00 01
+              	                     ; transferir, 1 pagina
+007F: 118010  	        LD DE, 1080H ; End. inicial destino   007F 11 80 10
+0082: 210008  	        LD HL, 0800H ; End. inicial fonte     0082 21 00 08
+0085: EDB0    	        LDIR         ; Salva os 256 BYTES da  0085 ED B0
+              	                     ; pagina zero da RAM
+              	
+0087: 010007  	        LD BC, 1792  ; Qtd. de BYTES a        0087 01 00 07
+              	                     ; transferir, 7 paginas
+008A: 110008  	        LD DE, 0800H ; End. inicial destino   008A 11 00 08
+008D: 210009  	        LD HL, 0900H ; End. inicial fonte     008D 21 00 09
+0090: EDB0    	        LDIR         ; Desloca 1792 BYTES das 0090 ED B0
+              	                     ; paginas 1 ate 7 para
+              	                     ; as paginas de zero
+              	                     ; ate 6 da RAM
+0092: 010001  	        LD BC, 256   ; Qtd. de BYTES a        0092 01 00 01
+              	                     ; transferir, 1 pagina
+0095: 11000F  	        LD DE, 0F00H ; End. inicial destino   0095 11 00 0F
+0098: 218010  	        LD HL, 1080H ; End. inicial fonte     0098 21 80 10
+009B: EDB0    	        LDIR         ; Coloca o antigo        009B ED B0
+              	                     ; conteudo da pagina
+              	                     ; zero na pagina 7 da RAM
+009D: 3A6110  	        LD A, (PAG)  ; End. relativo da       009D 3A 61 10
+              	                     ; tabela do DISPLAY p/ o
+              	                     ; ACC
+00A0: 3C      	        INC A        ; Proximo caracter do    00A0 3C
+              	                     ; DISPLAY
+00A1: FE08    	        CP 8         ; Verifica se o anterior 00A1 FE 08
+              	                     ; era o End. relativo do
+              	                     ; caracter '7'
+              	
+              	;--------------------;  75 DEEL/UFRJ
+              	
+00A3: 2002    	        JR NZ, PULA4 ; Se nao, pula           00A3 20 02
+00A5: 3E00    	        LD A, 0      ; Se sim, entao End. do  00A5 3E 00
+              	                     ; caracter zero para o
+              	                     ; ACC
+00A7: 326110  	PULA4:  LD (PAG), A  ; Guarda End. relativo   00A7 32 61 10
+              	                     ; do caracter atual
+00AA: C9      	        RET          ; Fim da troca           00AA C9
+              	
+              	;--------------------;
+              	
+00AB: 010001  	TROCA2: LD BC, 256   ; Qtd. de BYTES a        00AB 01 00 01
+              	                     ; transferir, 1 pagina
+00AE: 110008  	        LD DE, 0800H ; End. inicial destino,  00AE 11 00 08
+              	                     ; pagina zero da RAM
+00B1: 3A6110  	        LD A, (PAG)  ; End. relativo da       00B1 3A 61 10
+              	                     ; tabela do DISPLAY do
+              	                     ; ultimo caracter
+              	                     ; mostrado
+00B4: 3C      	        INC A        ; Proximo caracter       00B4 3C
+00B5: FE0A    	        CP 0AH       ;                        00B5 FE 0A
+00B7: 200B    	        JR NZ, PULA5 ; Se o carcter anterior  00B7 20 0B
+              	                     ; era a letra 'A', pula
+00B9: 3E08    	        LD A, 8      ; End. relativo da letra 00B9 3E 08
+              	                     ; 'A' na tabela do
+              	                     ; DISPLAY
+00BB: 326110  	        LD (PAG), A  ; Guarda End. relativo   00BB 32 61 10
+              	                     ; do caracter a ser
+              	                     ; mostrado no DISPLAY
+00BE: 218010  	        LD HL, 1080H ; End. inicial dos       00BE 21 80 10
+              	                     ; pontos utilizados pela
+              	                     ; rotina de FFT
+00C1: EDB0    	        LDIR         ; Copia para a pagina    00C1 ED B0
+              	                     ; zero da RAM o sinal do
+              	                     ; qual foi calculado o
+              	                     ; espectro
+00C3: C9      	        RET          ;                        00C3 C9
+              	
+00C4: 326110  	PULA5:  LD (PAG), A  ; Guarda End. relativo   00C4 32 61 10
+              	                     ; do caracter atual
+00C7: 218011  	        LD HL, 1180H ; End. inicial do        00C7 21 80 11
+              	                     ; espectro calculado
+              	
+              	;--------------------;  76 DEEL/UFRJ
+              	
+00CA: EDB0    	        LDIR         ; Copia para a pagina    00CA ED B0
+              	                     ; zero da RAM o espectro
+00CC: C9      	        RET          ;                        00CC C9
+              	
+              	;--------------------;
+              	
+00CD: 3A6110  	DISPLAY: LD A, (PAG) ; End. relativo do       00CD 3A 61 10
+              	                     ; caracter a ser mostrado
+00D0: 21E300  	        LD HL, TDISP ; End. do inicia da      00D0 21 E3 00
+              	                     ; tabela do DISPLAY
+00D3: 85      	        ADD A, L     ; Acumulador aponta para 00D3 85
+              	                     ; o End. do caracter
+00D4: 6F      	        LD L, A      ; HL aponta para p/ End. 00D4 6F
+              	                     ; do caracter H = 0
+00D5: 7E      	        LD A, (HL)   ; Codigo do caracter     00D5 7E
+              	                     ; para o Acumulador
+00D6: 320038  	        LD (DISPL), A; Acende DISPLAY com     00D6 32 00 38
+              	                     ; novo caracter
+00D9: C9      	        RET          ;                        00D9 C9
+              	
+              	;--------------------;
+              	
+00DA: 01FFFF  	ESPERA: LD BC, 65535 ; Espera                 00DA 01 FF FF
+              	                     ; 426 milissegundos para
+              	                     ; um clock de 4 MHz
+00DD: 0B      	LOOP1:  DEC BC       ;                        00DD 0B
+              	                     ;
+00DE: 78      	        LD A, B      ;                        00DE 78
+              	                     ;
+00DF: B1      	        OR C         ;                        00DF B1
+              	                     ;
+00E0: 20FB    	        JR NZ, LOOP1 ;                        00E0 20 FB
+              	                     ;
+00E2: C9      	        RET          ;                        00E2 C9
+              	
+              	;--------------------;
+              	
+              	        ; A seguir esta a tabela do DISPLAY:
+              	;
+00E3: 3F      	TDISP:  DB 3FH       ; Codigo p/ acender '0'  00E3 3F
+00E4: 06      	        DB 06H       ; Codigo p/ acender '1'  00E4 06
+00E5: 5B      	        DB 5BH       ; Codigo p/ acender '2'  00E5 5B
+00E6: 4F      	        DB 4FH       ; Codigo p/ acender '3'  00E6 4F
+00E7: 66      	        DB 66H       ; Codigo p/ acender '4'  00E7 66
+              	
+              	;--------------------;  77 DEEL/UFRJ
+              	
+00E8: 6D      	        DB 6DH       ; Codigo p/ acender '5'  00E8 6D
+00E9: 7D      	        DB 7DH       ; Codigo p/ acender '6'  00E9 7D
+00EA: 07      	        DB 07H       ; Codigo p/ acender '7'  00EA 07
+00EB: 77      	        DB 77H       ; Codigo p/ acender 'A'  00EB 77
+00EC: 71      	        DB 71H       ; Codigo p/ acender 'F'  00EC 71
+              	
+              	;--------------------;
+00ED: FFFFFFFF	        DS 13H       ; Area nao utilizada     00ED FF FF FF FF
+00F1: FF...   	
+              	                     ; 19 BYTES
+              	;--------------------;
+              	
+              	        ; Calculo da Fast Fourier  Transform
+              	
+0100: 3E80    	FFT:    LD A, 128    ; Coloca metade da qtd.  0100 3E 80
+              	                     ; de pontos em ACC
+0102: 6F      	        LD L, A      ;                        0102 6F
+0103: 2600    	        LD H, 0      ; Transfiro para HL      0103 26 00
+0105: 29      	        ADD HL, HL   ; Encontro a qtd. de     0105 29
+              	                     ; pontos N
+0106: 220010  	        LD (GN), HL  ; Guardo em GN           0106 22 00 10
+              	
+              	                     ; O trecho a seguir
+              	                     ; calcula:
+              	                     ; M = (LOG N) / LOG 2
+0109: 210000  	        LD HL, 0     ; Zera HL                0109 21 00 00
+              	                     ; N/2 esta' em ACC
+010C: 24      	LOOP2:  INC H        ;                        010C 24
+010D: 1F      	        RRA          ; SHIFT de ACC p/ a      010D 1F
+              	                     ; direita
+010E: 30FC    	        JR NC, LOOP2 ; Volta ao BIT = 0       010E 30 FC
+0110: 220210  	        LD (GM), HL  ; Coloca M em GM + 1 e   0110 22 02 10
+              	                     ; zera (GM) para
+              	                     ; facilitar sub-rotinas
+              	                     ; de BIT inverso
+0113: 010001  	        LD BC, 256   ;                        0113 01 00 01
+0116: 118010  	        LD DE, 1080H ; End. destino dos       0116 11 80 10
+              	                     ; pontos amostrados esta'
+              	                     ; na pagina zero da RAM
+0119: 210008  	        LD HL, AI    ; End. inicial da pagina 0119 21 00 08
+              	                     ; zero da RAM
+011C: EDB0    	        LDIR         ; Transfere 256 bytes    011C ED B0
+              	
+              	;--------------------;  78 DEEL/UFRJ
+              	
+011E: 01FF07  	        LD BC, 2047  ; Objetivo e' zerar os   011E 01 FF 07
+              	                     ; primeiros 2 KBYTES de
+              	                     ; RAM
+0121: 110108  	        LD DE, AI + 1;                        0121 11 01 08
+              	                     ;
+0124: 210008  	        LD HL, AI    ;                        0124 21 00 08
+              	                     ;
+0127: 3600    	        LD (HL), 0   ; Zera primeiro BYTE da  0127 36 00
+              	                     ; RAM
+0129: EDB0    	        LDIR         ; Zera mais 2047 BYTES   0129 ED B0
+              	                     ;
+012B: 117F11  	        LD DE, 117FH ; DE aponta para ultimo  012B 11 7F 11
+              	                     ; BYTE salvo
+012E: 21FF0B  	        LD HL,AI+1023; HL aponta para ultimo  012E 21 FF 0B
+              	                     ; BYTE da parte real
+0131: 0E00    	        LD C, 0      ; Inicia o contador com  0131 0E 00
+              	                     ; 256
+0133: 1A      	LOOP3:  LD A, (DE)   ; Coloca em ACC o valor  0133 1A
+              	                     ; a ser representado em
+              	                     ; 4 BYTES (int32_t)
+0134: C680    	        ADD A, 128   ; Subtrai o nivel DC     0134 C6 80
+0136: F23D01  	        JP P, PULA6  ; Se positivo, zero BYTE 0136 F2 3D 01
+              	                     ; mais significativo
+0139: 36FF    	        LD (HL), 0FFH; Sendo negativo, coloca 0139 36 FF
+              	                     ; FFh no BYTE mais
+              	                     ; significativo
+013B: 1802    	        JR PULA7     ; Pula                   013B 18 02
+013D: 3600    	PULA6:  LD (HL), 0   ; Sero BYTE mais         013D 36 00
+              	                     ; significativo
+013F: 2B      	PULA7:  DEC HL       ; Aponta HL para o 2o    013F 2B
+              	                     ; BYTE mais significativo
+0140: 77      	        LD (HL), A   ; Coloca o valor no 2o   0140 77
+              	                     ; BYTE mais significativo
+0141: 2B      	        DEC HL       ; Zero para o 3o BYTE    0141 2B
+              	                     ; mais significativo
+              	
+              	;--------------------;  79 DEEL/UFRJ
+              	
+0142: 2B      	        DEC HL       ; Zero para o BYTE menos 0142 2B
+              	                     ; significativo ???
+0143: 2B      	        DEC HL       ; HL aponta para o BYTE  0143 2B
+              	                     ; mais significativo do
+              	                     ; proximo ponto com
+              	                     ; 4 BYTES (int32_t)
+0144: 1B      	        DEC DE       ; DE aponta para proximo 0144 1B
+              	                     ; ponto representado
+              	                     ; por 1 BYTE
+0145: 0D      	        DEC C        ; Decrementa contador    0145 0D
+              	                     ; de ???
+0146: C23301  	        JP NZ, LOOP3 ; Se nao acabou, volto   0146 C2 33 01
+0149: 3A0310  	        LD A,(GM + 1); Coloca M em ACC        0149 3A 03 10
+014C: 320610  	LOOP4:  LD (GK), A   ; Salva K                014C 32 06 10
+              	                     ; A seguir faz
+              	                     ; KI = 2 ^ (K - 1)
+014F: 47      	        LD B, A      ; Coloca K em B          014F 47
+0150: AF      	        XOR A        ; Zera ACC               0150 AF
+0151: 37      	        SCF          ; CY = 1, (Carry)        0151 37
+0152: 17      	LOOP5:  RLA          ; Rotacao para a         0152 17
+              	                     ; esquerda atraves de CY
+0153: 05      	        DEC B        ; Decrementa contador    0153 05
+              	                     ; de ???
+0154: C25201  	        JP NZ, LOOP5 ; Se K1 <> 2 ^ (K - 1),  0154 C2 52 01
+              	                     ; volta
+0157: 320710  	        LD (GK1), A  ; Salva K1               0157 32 07 10
+015A: 2600    	        LD H, 0      ;                        015A 26 00
+015C: 6F      	        LD L, A      ; K1 esta' em HL         015C 6F
+015D: 29      	        ADD HL, HL   ; Faz K2 = 2 * K1        015D 29
+015E: 3D      	        DEC A        ; Faz K3 = K1 - 1        015E 3D
+015F: 220810  	        LD (GK2), HL ; Salva K2               015F 22 08 10
+0162: 320A10  	        LD (GK3), A  ; Salva K3               0162 32 0A 10
+0165: AF      	        XOR A        ; Inicia P               0165 AF
+0166: 320B10  	LOOP6:  LD (GP), A   ; Salva P                0166 32 0B 10
+              	                     ; X = P
+              	
+              	;--------------------;  80 DEEL/UFRJ
+              	
+0169: ED4B0610	        LD BC, (GK)  ; Recupera K             0169 ED 4B 06 10
+              	                     ; A seguir faz:
+              	                     ; X = P / (2 * K1)
+016D: CB3F    	LOOP7:  SRL A        ; X = X / 2              016D CB 3F
+016F: 0D      	        DEC C        ; Decrementa K           016F 0D
+0170: C26D01  	        JP NZ, LOOP7 ; Se X <> P / (2 * K1),  0170 C2 6D 01
+              	                     ; volta
+0173: 17      	        RLA          ; X = P / K1             0173 17
+0174: CD3203  	        CALL BINV1   ; Represento X em  BIT   0174 CD 32 03
+              	                     ; inverso e faz:
+              	                     ; S = X * 256 / N para
+              	                     ; busca na tabela de
+              	                     ; seno. S esta' em HL
+0177: 7D      	        LD A, L      ;                        0177 7D
+0178: 320C10  	        LD (GS), A   ; Salva S                0178 32 0C 10
+017B: 29      	        ADD HL, HL   ; Multiplica S por 2     017B 29
+              	                     ; porque o seno esta'
+              	                     ; representado com
+              	                     ; 2 BYTES
+017C: EB      	        EX DE, HL    ; Coloca em DE           017C EB
+017D: 218006  	        LD HL, TABSEN; HL aponta para o       017D 21 80 06
+              	                     ; inicio da tabela
+0180: 19      	        ADD HL, DE   ; HL aponta para         0180 19
+              	                     ; sen (2*PI * S / N)/ 2
+0181: 110D10  	        LD DE, Y1    ; DE aponta para Y1      0181 11 0D 10
+0184: EDA0    	        LDI          ; Faz: (Y1) =            0184 ED A0
+0186: EDA0    	        LDI          ; sen (2*PI * S / N)/ 2  0186 ED A0
+              	                     ; DE aponta para X1
+0188: 017E00  	        LD BC, 126   ; O co-seno esta' 128    0188 01 7E 00
+018B: 09      	        ADD HL, BC   ; BYTES apos o seno      018B 09
+              	                     ; cos (2*PI * S / N)/ 2
+              	
+              	;--------------------;  81 DEEL/UFRJ
+              	
+018C: EDA0    	        LDI          ; Faz: (X1) =            018C ED A0
+018E: EDA0    	        LDI          ; cos (2*PI * S / N)/ 2  018E ED A0
+              	                     ; DE aponta para ???
+              	                     ; BC aponta para ???
+0190: 3EFF    	        LD A, 0FFH   ; Inicia J com 0         0190 3E FF
+0192: 3C      	LOOP8:  INC A        ; Proximo J              0192 3C
+0193: 321110  	        LD (GJ), A   ; Salva J                0193 32 11 10
+0196: 2A0B10  	        LD HL, (GP)  ; Recupera P             0196 2A 0B 10
+0199: 85      	        ADD A, L     ;                        0199 85
+019A: 6F      	        LD L, A      ; Faco K4 (J + P)        019A 6F
+              	                     ; registrador L
+019B: AF      	        XOR A        ; Zera ACC               019B AF
+019C: 67      	        LD H, A      ; Zera H, (J + P) < 256  019C 67
+019D: 010008  	        LD BC, AI    ; BC aponta para         019D 01 00 08
+              	                     ; primeiro BYTE do
+              	                     ; vetor A(I)
+01A0: 29      	        ADD HL, HL   ; Multiplica J + P por 4 01A0 29
+01A1: 29      	        ADD HL, HL   ; porque a representacao 01A1 29
+              	                     ; de A(I) e B(I) e' com
+              	                     ; 4 BYTES (int32_t)
+01A2: 09      	        ADD HL, BC   ; HL aponta para BYTE    01A2 09
+              	                     ; menos significativo
+              	                     ; de A(K4)
+01A3: 221210  	        LD (AK4), HL ; Salva End. de A(K4)    01A3 22 12 10
+01A6: EB      	        EX DE, HL    ; Coloca K4 em DE        01A6 EB
+01A7: 2A0710  	        LD HL, (GK1) ; Coloca K1 em L         01A7 2A 07 10
+01AA: 67      	        LD H, A      ; Zera H                 01AA 67
+01AB: 29      	        ADD HL, HL   ; Multiplica J + P por 4 01AB 29
+01AC: 29      	        ADD HL, HL   ; porque a representacao 01AC 29
+              	                     ; de A(I) e B(I) e' com
+              	                     ; 4 BYTES (int32_t)
+01AD: 19      	        ADD HL, DE   ; Faco K5 = K4 + K1      01AD 19
+              	                     ; HL aponta para A(K5)
+              	
+              	;--------------------;  82 DEEL/UFRJ
+              	
+01AE: 221410  	        LD (AK5), HL ; Salva End. de A(K5)    01AE 22 14 10
+01B1: 010004  	        LD BC, 1024  ; O End. de B(i) esta'   01B1 01 00 04
+              	                     ;1024 BYTES acima de A(I)
+01B4: 09      	        ADD HL, BC   ; HL aponta p/ B(K5)     01B4 09
+01B5: 221810  	        LD (BK5), HL ; Salva End. de B(K5)    01B5 22 18 10
+01B8: EB      	        EX DE, HL    ; Coloca K4 em HL        01B8 EB
+01B9: 09      	        ADD HL, BC   ; HL aponta p/ B(K4)     01B9 09
+01BA: 221610  	        LD (BK4), HL ; Salva End. de B(K4)    01BA 22 16 10
+01BD: 111A10  	        LD DE, MULT  ; End. de destino do     01BD 11 1A 10
+              	                     ; multiplicador em
+              	                     ; modulo e sinal
+01C0: 2A1410  	        LD HL, (AK5) ; HL aponta para A(K5)   01C0 2A 14 10
+              	                     ; em complemento a 2
+01C3: CDB003  	        CALL COMP    ; Representa (A(K5) em   01C3 CD B0 03
+              	                     ; modulo e sinal e
+              	                     ; coloca em (DE)
+01C6: ED4B0F10	        LD BC, (X1)  ; Coloca                 01C6 ED 4B 0F 10
+              	                     ; cos (2*PI * S / N)/ 2
+              	                     ; em BC, multiplicando
+01CA: CD7003  	        CALL ROT     ; Faz                    01CA CD 70 03
+              	                     ; C1 = cos(2*PI * S / N)
+              	                     ; e coloca o resultado
+              	                     ; em (MUL), na
+              	                     ; representacao de
+              	                     ; modulo e sinal
+01CD: 111E10  	        LD DE, C1    ; End. destino           01CD 11 1E 10
+01D0: 212E10  	        LD HL, MUL   ; End. fonte             01D0 21 2E 10
+01D3: CDB003  	        CALL COMP    ; Faz:                   01D3 CD B0 03
+              	                     ; (C1) = A(K5) *
+              	                     ; cos(2*PI * S / N)
+              	                     ; na representacao
+              	                     ; complemento a 2
+01D6: ED4B0D10	        LD BC, (Y1)  ; sen (2 * PI * S / N)   01D6 ED 4B 0D 10
+              	                     ; p/ BC
+01DA: CD7003  	        CALL ROT     ; Faz                    01DA CD 70 03
+              	                     ; A(K5) *
+              	                     ; sen (2 * PI * S / N)
+              	                     ; e coloca o resultado
+              	                     ; em (MUL), na
+              	                     ; representacao de
+              	                     ; modulo e sinal
+01DD: 112610  	        LD DE, C3    ; End. destino           01DD 11 26 10
+              	
+              	;--------------------;  83 DEEL/UFRJ
+              	
+01E0: 212E10  	        LD HL, MUL   ; End. fonte             01E0 21 2E 10
+01E3: CDB003  	        CALL COMP    ; Faz:                   01E3 CD B0 03
+              	                     ; (C3) = A(K5) *
+              	                     ; sen (2 * PI * S / N)
+              	                     ; na representacao
+              	                     ; complemento a 2
+01E6: 111A10  	        LD DE, MULT  ; End. destino do        01E6 11 1A 10
+              	                     ; multiplicador em
+              	                     ; modulo e sinal
+01E9: 2A1810  	        LD HL, (BK5) ; HL aponta para B(K5)   01E9 2A 18 10
+              	                     ; na representacao
+              	                     ; complemento a 2
+01EC: CDB003  	        CALL COMP    ; Represnta B(K5) em     01EC CD B0 03
+              	                     ; modulo e sinal e
+              	                     ; coloca em (MULT)
+01EF: ED4B0D10	        LD BC, (Y1)  ; sen (2 * PI * S / N)   01EF ED 4B 0D 10
+              	                     ; p/ BC
+01F3: CD7003  	        CALL ROT     ; Faz: B(K5) *           01F3 CD 70 03
+              	                     ; sen ( 2 * PI * S / N)
+              	                     ; na representacao
+              	                     ; complemento a 2
+01F6: 112210  	        LD DE, C2    ; End. destino           01F6 11 22 10
+01F9: 212E10  	        LD HL, MUL   ; End. fonte             01F9 21 2E 10
+01FC: CDB003  	        CALL COMP    ; Faz:                   01FC CD B0 03
+              	                     ; (C2) = B(K5) *
+              	                     ; sen (2 * PI * S / N)
+              	                     ; em complemento a 2
+01FF: ED4B0F10	        LD BC, (X1)  ; Faz: BC *              01FF ED 4B 0F 10
+              	                     ; cos ( 2 * PI * S / N)
+0203: CD7003  	        CALL ROT     ; Faz: B(K5) *           0203 CD 70 03
+              	                     ; cos ( 2 * PI * S / N)
+0206: 112A10  	        LD DE, C4    ; End. destino           0206 11 2A 10
+0209: 212E10  	        LD HL, MUL   ; End. fonte             0209 21 2E 10
+020C: CDB003  	        CALL COMP    ; Faz: (C4) = B(K5) *    020C CD B0 03
+              	                     ; cos ( 2 * PI * S / N)
+              	                     ; em complemento a 2
+020F: DD213210	        LD IX, X2    ; End do resultado da    020F DD 21 32 10
+              	                     ; soma
+0213: 211E10  	        LD HL, C1    ; End. de uma parcela    0213 21 1E 10
+0216: 112210  	        LD DE, C2    ; End. outra parcela     0216 11 22 10
+0219: CD1003  	        CALL MAIS    ; Faz: (X2) = (C1) + C2) 0219 CD 10 03
+              	
+              	;--------------------;  84 DEEL/UFRJ
+              	
+021C: DD213610	        LD IX, Y2    ; End. do resultado da   021C DD 21 36 10
+              	                     ; subtracao
+0220: 212610  	        LD HL, C3    ; End. do subtraendo     0220 21 26 10
+0223: 112A10  	        LD DE, C4    ; End. do minuendo       0223 11 2A 10
+0226: CD2103  	        CALL MENOS   ; Faz: (Y2) = -(C3)+(C4) 0226 CD 21 03
+0229: DD2A1410	        LD IX, (AK5) ; End. do resultado da   0229 DD 2A 14 10
+              	                     ; subtracao
+022D: ED5B1210	        LD DE, (AK4) ;End. de (AK4), minuendo 022D ED 5B 12 10
+0231: 213210  	        LD HL, X2    ; End. do subtraendo     0231 21 32 10
+0234: CD2103  	        CALL MENOS   ; Faz: A(K5) = A(K4) -X2 0234 CD 21 03
+0237: DD2A1810	        LD IX, (BK5) ; End. do resultado da   0237 DD 2A 18 10
+              	                     ; subtracao
+023B: ED5B1610	        LD DE, (BK4) ;End. de B(K4), minuendo 023B ED 5B 16 10
+023F: 213610  	        LD HL, Y2    ; End. do subtraendo     023F 21 36 10
+0242: CD2103  	        CALL MENOS   ; Faz: B(K5)= B(K4) - Y2 0242 CD 21 03
+0245: DD2A1210	        LD IX, (AK4) ; End. da soma           0245 DD 2A 12 10
+0249: ED5B3210	        LD DE, (X2)  ; End. de uma parcela    0249 ED 5B 12 10 Erro?
+024D: 2A1210  	        LD HL, (AK4) ; End. de outra parcela  024D 21 32 10    Erro?
+0250: CD1003  	        CALL MAIS    ; Faz: A(K4)= A(K4) + X2 0250 CD 10 03
+0253: DD2A1610	        LD IX, (BK4) ; End. da soma           0253 DD 2A 16 10
+0257: ED5B3610	        LD DE, (Y2)  ; End. de uma parcela    0257 ED 5B 16 10 Erro?
+025B: 2A1610  	        LD HL, (BK4) ; End. de outra parcela  025B 21 36 10    Erro?
+025E: CD1003  	        CALL MAIS    ; Faz: B(K4)= B(K4) + Y2 025E CD 10 03
+0261: 3A1110  	        LD A, (GJ)   ; Recupera J             0261 3A 11 10
+0264: 2A0A10  	        LD HL, (GK3) ; End. de K3 em HL       0264 21 0A 10    Erro?
+0267: BE      	        CP (HL)      ; Verifica se J = K3     0267 BE
+0268: C29201  	        JP NZ, LOOP8 ; Senao volta            0268 C2 92 01
+026B: 3A0B10  	        LD A, (GP)   ; Recupera P             026B 3A 0B 10
+026E: 1600    	        LD D, 0      ;                        026E 16 00
+              	
+              	;--------------------;  85 DEEL/UFRJ
+              	
+0270: 5F      	        LD E, A      ; Coloca P em DE         0270 5F
+0271: 2A0810  	        LD HL, (GK2) ; Coloca step em HL, K2  0271 2A 08 10
+0274: 19      	        ADD HL, DE   ; Proximo J              0274 19
+0275: ED4B0010	        LD BC, (GN)  ; N para BC              0275 ED 4B 00 10
+0279: 7D      	        LD A, L      ; J em ACC               0279 7D
+027A: B9      	        CP C         ; Compara J com N        027A B9
+027B: C26601  	        JP NZ, LOOP6 ; Se J < (N - 1), volta  027B C2 66 01
+027E: 3A0610  	        LD A, (GK)   ; Recupera K             027E 3A 06 10
+0281: 3D      	        DEC A        ; K = K - 1              0281 3D
+0282: C24C01  	        JP NZ, LOOP4 ; Se K <> 0, volta       0282 C2 4C 01
+0285: 3E01    	        LD A, 1      ; Inicializo I           0285 3E 01
+0287: 323A10  	LOOP9:  LD (GI), A   ; Salva I                0287 32 3A 10
+028A: CD3703  	        CALL BINV2   ; Represento em BIT      028A CD 37 03
+              	                     ; inverso os M BITS
+              	                     ; menos significativos,
+              	                     ; S esta' em HL
+028D: 3A3A10  	        LD A, (GI)   ; Recupera I             028D 3A 3A 10
+0290: BD      	        CP L         ; Compara I com S        0290 BD
+0291: D2EC02  	        JP NC, PULA8 ; Se I > S, pula         0291 D2 EC 02
+0294: 29      	        ADD HL, HL   ; S = 4 * s porque A(S)  0294 29
+0295: 29      	        ADD HL, HL   ; B(S) sao de 4 BYTES    0295 29
+0296: 010008  	        LD BC, AI    ; End. do primeiro BYTE  0296 01 00 08
+              	                     ; de A(0)
+0299: 110004  	        LD DE, 1024  ; B(0) esta' 1024 BYTES  0299 11 00 04
+              	                     ; depois
+029C: 09      	        ADD HL, BC   ; HL aponta para A(S)    029C 09
+029D: 223B10  	        LD (GAS), HL ; Salva End. de A(S)     029D 22 3B 10
+02A0: 19      	        ADD HL, DE   ; HL aponta para B(S)    02A0 19
+02A1: 223D10  	        LD (GBS), HL ; Salva End. de B(S)     02A1 22 3D 10
+              	
+              	;--------------------;  86 DEEL/UFRJ
+              	
+02A4: 2600    	        LD H, 0      ; Coloca I em HL         02A4 26 00
+02A6: 6F      	        LD L, A      ;                        02A6 6F
+02A7: 29      	        ADD HL, HL   ; S = 4 * s porque A(S)  02A7 29
+02A8: 29      	        ADD HL, HL   ; B(S) sao de 4 BYTES    02A8 29
+02A9: 09      	        ADD HL, BC   ; HL aponta para A(I)    02A9 09
+02AA: 223F10  	        LD (GAI), HL ; Salva End. de A(I)     02AA 22 3F 10
+02AD: 19      	        ADD HL, DE   ; HL aponta para B(I)    02AD 19
+02AE: 224110  	        LD (GBI), HL ; Salva End. de B(I)     02AE 22 41 10
+02B1: 010400  	        LD BC, 4     ; Qtd. de BYTES a        02B1 01 04 00
+              	                     ; transferir
+02B4: 114310  	        LD DE, X3    ; End. de destino        02B4 11 43 10
+02B7: 2A3F10  	        LD HL, (GAI) ; End. fonte             02B7 2A 3F 10
+02BA: EDB0    	        LDIR         ; Faz: X3 = A(I)         02BA ED B0
+02BC: 0E04    	        LD C, 4      ; Qtd. de BYTES a        02BC 0E 04
+              	                     ; transferir
+02BE: 2A4110  	        LD HL, (GBI) ; End. fonte             02BE 2A 41 10
+              	                     ; DE aponta para End.
+              	                     ; destino Y3
+02C1: EDB0    	        LDIR         ; Faz Y3 = (BI)          02C1 ED B0
+02C3: 0E04    	        LD C, 4      ; Qtd. de BYTES a        02C3 0E 04
+              	                     ; transferir
+02C5: ED5B3F10	        LD DE, (GAI) ; End. destino           02C5 ED 5B 3F 10
+02C9: 2A3B10  	        LD HL, (GAS) ; End. fonte             02C9 2A 3B 10
+02CC: EDB0    	        LDIR         ; Faz: A(I) = A(S)       02CC ED B0
+02CE: 0E04    	        LD C, 4      ; Qtd. de BYTES a        02CE 0E 04
+              	                     ; transferir
+02D0: ED5B4110	        LD DE, (GBI) ; End. destino           02D0 ED 5B 41 10
+02D4: 2A3D10  	        LD HL, (GBS) ; End. fonte             02D4 2A 3D 10
+02D7: EDB0    	        LDIR         ; Faz: B(I) = B(S)       02D7 ED B0
+02D9: 0E04    	        LD C, 4      ; Qtd. de BYTES a        02D9 0E 04
+              	                     ; transferir
+02DB: ED5B3B10	        LD DE, (GAS) ; End. destino           02DB ED 5B 3B 10
+              	
+              	;--------------------;  87 DEEL/UFRJ
+              	
+02DF: 2A4310  	        LD HL, (X3)  ; End. fonte             02DF 21 43 10    Erro?
+02E2: EDB0    	        LDIR         ; Faz: A(S) = X3         02E2 ED B0
+02E4: 0E04    	        LD C, 4      ; Qtd. de BYTES a        02E4 0E 04
+              	                     ; transferir
+02E6: ED5B3D10	        LD DE, (GBS) ; End. destino,          02E6 ED 5B 3D 10
+              	                     ; End. fonte em HL, Y3
+02EA: EDB0    	        LDIR         ; Faz: B(S) = Y3         02EA ED B0
+02EC: 3A3A10  	PULA8:  LD A, (GI)   ; Recupera I             02EC 3A 3A 10
+02EF: 3C      	        INC A        ; Proximo I              02EF 3C
+02F0: 210010  	        LD HL, GN    ; End. de N              02F0 21 00 10
+02F3: BE      	        CP (HL)      ; Compara I com BYTE     02F3 BE
+              	                     ; menos significativo
+              	                     ; de N
+02F4: C28702  	        JP NZ, LOOP9 ; Se I <> N, volta       02F4 C2 87 02
+02F7: CD3004  	        CALL MODULO  ; Faz: M(0) = A(0) N e   02F7 CD 30 04
+              	                     ; N(I) = 2 *
+              	                     ; sqr(A(I)^2+B(I)^2)/N
+              	                     ; para I = 1 a N-1 com
+              	                     ; 16 BITS
+02FA: CDD404  	        CALL TRANSF  ; Representa M(I) com    02FA CD D4 04
+              	                     ; 8 BITS arredondando e
+              	                     ; transfere para MI8 e
+              	                     ; tambem p/ pagina zero
+              	                     ; da RAM. Acende DISPLAY
+              	                     ; com 'F'
+02FD: C9      	        RET          ; Fim da FFT             02FD C9
+              	
+              	;--------------------;
+02FE: FFFFFFFF	        DS 12H       ; Area nao utilizada     02FE FF FF FF FF
+0302: FF...   	
+              	                     ; 18 BYTES
+              	;--------------------;
+              	
+              	        ; Faz: (IX)= (DE) + (HL) com 4 BYTES
+0310: 0E04    	MAIS:   LD C, 4      ; Qtd. de BYTES a        0310 0E 04
+              	                     ; transferir
+0312: B7      	        OR A         ; Zera Carry             0312 B7
+0313: 1A      	LOOP10: LD A, (DE)   ; BYTE da 1a parcela     0313 1A
+0314: 8E      	        ADC A, (HL)  ; Soma com BYTE da       0314 8E
+              	                     ; segunda parcela e com
+              	                     ; Carry anterior
+0315: DD7700  	        LD (IX +0), A; Guarda a soma em (IX)  0315 DD 77 00
+              	
+              	;--------------------;  88 DEEL/UFRJ
+              	
+0318: 13      	        INC DE       ; Proximo BYTE da 1a     0318 13
+              	                     ; parcela
+0319: 23      	        INC HL       ; Proximo BYTE da 2a     0319 23
+              	                     ; parcela
+031A: DD23    	        INC IX       ; Proximo BYTE da soma   031A DD 23
+031C: 0D      	        DEC C        ; Decrementa contador    031C 0D
+031D: C21303  	        JP NZ, LOOP10; Se nao terminou, volta 031D C2 13 03
+0320: C9      	        RET          ; Fim da soma            0320 C9
+              	
+              	;--------------------;
+              	
+              	        ; Faz: (IX)= (DE) - (HL) com 4 BYTES
+0321: 0E04    	MENOS:  LD C, 4      ; Qtd. de BYTES a        0321 0E 04
+              	                     ; transferir
+0323: B7      	        OR A         ; Zera Carry             0323 B7
+0324: 1A      	LOOP11: LD A, (DE)   ; Minuendo               0324 1A
+0325: 9E      	        SBC A, (HL)  ; Minuendo - Subtraendo  0325 9E
+              	                     ; - Carry anterior
+0326: DD7700  	        LD (IX +0), A; Guarda a soma em (IX)  0326 DD 77 00
+0329: 13      	        INC DE       ; Proximo BYTE do        0329 13
+              	                     ; minuendo
+032A: 23      	        INC HL       ; Proximo BYTE do        032A 23
+              	                     ; subtraendo
+032B: DD23    	        INC IX       ; Proximo BYTE da        032B DD 23
+              	                     ; diferenca
+032D: 0D      	        DEC C        ; Decrementa contador    032D 0D
+032E: C22403  	        JP NZ, LOOP11; Se nao terminou, volta 032E C2 24 03
+0331: C9      	        RET          ; Fim da subtracao       0331 C9
+              	
+              	;--------------------;
+              	
+0332: 2608    	BINV1:  LD H, 8      ;Para inverter os 8 bits 0332 26 08
+0334: C33A03  	        JP LOOP12    ; Pula                   0334 C3 3A 03
+              	;
+0337: 2A0210  	BINV2:  LD HL, (GM)  ;Para inverter os M bits 0337 2A 02 10
+              	                     ; menos significativo,
+              	                     ; M esta' em H
+033A: 0F      	LOOP12: RRCA         ;BIT menos significativo 033A 0F
+              	                     ; p/ Carry
+              	
+              	;--------------------;  89 DEEL/UFRJ
+              	
+033B: CB15    	        RL L         ; Caeey CY p/ BIT menos  033B CB 15
+              	                     ; significativo
+033D: 25      	        DEC H        ; Decrementa contador de 033D 25
+              	                     ; BITS
+033E: C23A03  	        JP NZ, LOOP12; Se nao terminou, volta 033E C2 3A 03
+0341: C9      	        RET          ; Fim, H = 0 e L com S   0341 C9
+              	
+              	;--------------------;
+              	
+              	        ; Multiplica BC por DE e coloca o
+              	        ; resultado em DEHL, nao altera BC
+0342: 3E10    	MULTIP: LD A, 16     ; Qtd. de BITS do        0342 3E 10
+              	                     ; multiplicando e do
+              	                     ; multiplicador
+0344: 210000  	        LD HL, 0     ; Zera HL                0344 21 00 00
+0347: 29      	LOOP13: ADD HL, HL   ; Dobra HL               0347 29
+0348: EB      	        EX DE, HL    ;                        0348 EB
+0349: ED6A    	        ADC HL, HL   ;                        0349 ED 6A
+034B: EB      	        EX DE, HL    ; 2 vezes DE + CY de HL  034B EB
+034C: D25403  	        JP NC, PULA9 ; Continue se nenhum CY  034C D2 54 03
+034F: 09      	        ADD HL, BC   ; Soma multiplicando     034F 09
+0350: D25403  	        JP NC, PULA9 ; Se nao CY, pula        0350 D2 54 03
+0353: 13      	        INC DE       ; DE + CY                0353 13
+0354: 3D      	PULA9:  DEC A        ; Decrementa contador    0354 3D
+0355: C24703  	        JP NZ, LOOP13; Se nao terminou, volta 0355 C2 47 03
+0358: C9      	        RET          ; Fim da multiplicacao   0358 C9
+              	
+              	;--------------------;
+              	
+              	        ; Divide HLDE por BC, quociente em DE
+              	        ; e resto em HL, nao altera BC
+0359: 3E10    	DIVIDE: LD A, 16     ;                        0359 3E 10
+035B: EB      	LOOP14: EX DE, HL    ;                        035B EB
+035C: 29      	        ADD HL, HL   ;                        035C 29
+035D: EB      	        EX DE, HL    ;                        035D EB
+035E: ED6A    	        ADC HL, HL   ;                        035E ED 6A
+              	
+              	;--------------------;  90 DEEL/UFRJ
+              	
+0360: B7      	        OR A         ; Limpa CY               0360 B7
+0361: ED42    	        SBC HL, BC   ; Subtrai o divisor      0361 ED 42
+0363: F26803  	        JP P, PULA10 ; Se deu positivo, pula  0363 F2 68 03
+0366: 09      	        ADD HL, BC   ; Soma divisor           0366 09
+0367: 1B      	        DEC DE       ; Decrementa DE          0367 1B
+0368: 13      	PULA10: INC DE       ; Incrementa DE          0368 13
+0369: 3D      	        DEC A        ; Decrementa contador    0369 3D
+036A: C25B03  	        JP NZ, LOOP14; Se nao terminou, volta 036A C2 5B 03
+036D: C9      	        RET          ; Fim da divisao         036D C9
+              	
+              	;--------------------;
+036E: FFFF    	        DS 2         ; Area nao utilizada     036E FF FF
+              	                     ; 2 BYTES
+              	;--------------------;
+              	
+              	        ; Multiplica BC por (MULT), 4 BYTES
+              	        ; dando um resultado com 6 BYTES,
+              	        ; desprezando os 2 menos
+              	        ; significativos e guardando o
+              	        ; resultado em (MUL), com 4 BYTES
+0370: 78      	ROT:    LD A, B      ;                        0370 78
+0371: F5      	        PUSH AF      ; Salva sinal do         0371 F5
+              	                     ; multiplicando, BIT 7
+              	                     ; de ACC
+0372: CB21    	        SLA C        ;                        0372 CB 21
+0374: CB10    	        RL B         ; Recupera modulo do     0374 CB 10
+              	                     ; seno ou co-seno
+0376: ED5B1A10	        LD DE, (MULT); Os 2 BYTES menos       0376 ED 5B 1A 10
+              	                     ; significativos do
+              	                     ; multiplicador
+037A: CD4203  	        CALL MULTIP  ; Multiplica BC por DE e 037A CD 42 03
+              	                     ; coloca o resultado em
+              	                     ; DEHL
+037D: ED532E10	        LD (MUL), DE ; Guarda 2 BYTES menos   037D ED 53 2E 10
+              	                     ; significativos do
+              	                     ; produto
+0381: ED5B1C10	        LD DE,(MULT+2); 2 BYTES mais          0381 ED 5B 1C 10
+              	                     ; significativos do
+              	                     ; multiplicador
+              	
+              	;--------------------;  91 DEEL/UFRJ
+              	
+0385: F1      	        POP AF       ; Recupera sinal do      0385 F1
+              	                     ; multiplicador no
+              	                     ; BIT 7 de ACC
+0386: AA      	        XOR D        ; Coloca no FLAG de      0386 AA
+              	                     ; sinal o sinal do
+              	                     ; produto
+0387: F5      	        PUSH AF      ; Salva sinal do produto 0387 F5
+0388: CBBA    	        RES 7, D     ; Torna multiplicador    0388 CB BA
+              	                     ; positivo
+038A: CD4203  	        CALL MULTIP  ; Multiplica BC por DE e 038A CD 42 03
+              	                     ; coloca o resultado em
+              	                     ; DEHL
+038D: ED533010	        LD (MUL+2),DE; Salva 2 BYTES mais     038D ED 53 30 10
+              	                     ; significativos do
+              	                     ; produto
+0391: ED5B2E10	        LD DE, (MUL) ; Recupera 2 BYTES da    0391 ED 5B 2E 10
+              	                     ; multiplicacao
+              	                     ; anterior
+0395: 19      	        ADD HL, DE   ; Soma 2 BYTES das       0395 19
+              	                     ; multiplicacoes
+0396: 222E10  	        LD (MUL), HL ; Salva 2 BYTES menos    0396 22 2E 10
+              	                     ; significativos do
+              	                     ; produto
+0399: 2A3010  	        LD HL,(MUL+2); Recupera 2 BYTES mais  0399 2A 30 10
+              	                     ; significativos do
+              	                     ; produto
+039C: D2A003  	        JP NC, PULA11; Se nao houve Carry da  039C D2 A0 03
+              	                     ; soma, pula
+039F: 23      	        INC HL       ; Havendo Carry,         039F 23
+              	                     ; incrementa 2 BYTES
+              	                     ; mais significativos do
+              	                     ; produto
+03A0: F1      	PULA11: POP AF       ; Recupera sinal do      03A0 F1
+              	                     ; produto
+03A1: F2A603  	        JP P, PULA12 ; Se positivo, pula      03A1 F2 A6 03
+03A4: CBFC    	        SET 7, H     ; Sendo negativo seta o  03A4 CB FC
+              	                     ; BIT mais significativo
+              	                     ; do BYTE mais
+              	                     ; significativo do
+              	                     ; produto
+              	
+              	;--------------------;  92 DEEL/UFRJ
+              	
+03A6: 223010  	PULA12: LD (MUL+2),HL; Guarda 2 BYTES mais    03A6 22 30 10
+              	                     ; significativos do
+              	                     ; produto
+03A9: C9      	        RET          ; Fim. O produto se      03A9 C9
+              	                     ; encontra em DEHL
+              	                     ; representado em
+              	                     ; modulo e sinal
+              	
+              	;--------------------;
+03AA: FFFFFFFF	        DS 6         ; Area nao utilizada     03AA FF FF FF FF
+03AE: FFFF    	
+              	                     ; 6 BYTES
+              	;--------------------;
+              	
+              	        ; Representa um num. de 03B0 4 BYTES
+              	        ; inicialmente em modulo e sinal
+              	        ; ou vice-versa
+03B0: D5      	COMP:   PUSH DE      ; Salva End. destino     03B0 D5
+              	                     ; End. fonte esta' em HL
+03B1: 010400  	        LD BC, 4     ; Qtd. de BYTES ocupados 03B1 01 04 00
+              	                     ; pelo numero
+03B4: 79      	        LD A, C      ; Salva qtd. de BYTES    03B4 79
+03B5: EDB0    	        LDIR         ; Transfere 4 BYTES de   03B5 ED B0
+              	                     ; (HL) para (DE)
+03B7: 4F      	        LD C, A      ; Recupera qtd. de BYTES 03B7 4F
+03B8: 1B      	        DEC DE       ; DE aponta para BYTE    03B8 1B
+              	                     ; mais significativo
+03B9: 1A      	        LD A, (DE)   ; Pega BYTE mais         03B9 1A
+              	                     ; significativo
+03BA: 07      	        RLCA         ; Coloca sinal em CY e   03BA 07
+              	                     ; no BIT 0 de ACC
+03BB: D2CC03  	        JP NC, PULA13; Pula, se positivo      03BB D2 CC 03
+03BE: 3F      	        CCF          ; Torna positivo         03BE 3F
+03BF: 1F      	        RRA          ; Coloca sinal positivo  03BF 1F
+              	                     ; do num. e torna CY = 1
+03C0: 12      	        LD (DE), A   ; Salva BYTE mais        03C0 12
+              	                     ; significativo
+              	
+              	;--------------------;  93 DEEL/UFRJ
+              	
+03C1: D1      	        POP DE       ; Recupera End. Destino  03C1 D1
+              	                     ; para recuperar BYTE
+              	                     ; menos significativo
+              	                     ; o Carry e' zero
+03C2: 1A      	LOOP15: LD A, (DE)   ; Recuperar BYTE         03C2 1A
+03C3: 2F      	        CPL          ; Complementa BYTE.      03C3 2F
+              	                     ; B contem zero
+03C4: 88      	        ADC A, B     ; Soma BYTE com o Carry  03C4 88
+03C5: 12      	        LD (DE), A   ; Salva BYTE             03C5 12
+03C6: 13      	        INC DE       ; Aponta para o proximo  03C6 13
+              	                     ; BYTE
+03C7: 0D      	        DEC C        ; Decrementa contador de 03C7 0D
+              	                     ; BYTES
+03C8: C2C203  	        JP NZ, LOOP15; Se nao terminou, volta 03C8 C2 C2 03
+03CB: C9      	        RET          ;Fim. O num. e' negativo 03CB C9
+              	                     ;
+03CC: D1      	PULA13: POP DE       ; Recupera posicao do    03CC D1
+              	                     ; STACK POINTER
+03CD: C9      	        RET          ;Fim. O num. e' positivo 03CD C9
+              	
+              	;--------------------;
+03CE: FFFF    	        DS 2         ; Area nao utilizada     03CE FF FF
+              	                     ; 2 BYTES
+              	;--------------------;
+              	
+              	        ; Faz raiz quadrada de um num.
+              	        ; colocado em HLDE e coloca o
+              	        ; resultado em BC.
+              	        ; Metodo Newton Raphson.
+03D0: 3E02    	RAIZ:   LD A, 2      ; precisa dividir o num. 03D0 3E 02
+              	                     ; por 4 para nao ocorrer
+              	                     ; OVERFLOW
+03D2: CB3C    	LOOP16: SRL H        ; Divide H por 2, coloca 03D2 CB 3C
+              	                     ; BIT 0 de H em CY
+03D4: CB1D    	        RR L         ; Divide L por 2, coloca 03D4 CB 1D
+              	                     ; BIT 0 de L em CY
+03D6: CB1A    	        RR D         ; Divide D por 2, coloca 03D6 CB 1A
+              	                     ; BIT 0 de D em CY
+              	
+              	;--------------------;  94 DEEL/UFRJ
+              	
+03D8: CB1B    	        RR E         ; Divide E por 2, coloca 03D8 CB 1B
+              	                     ; BIT 0 de E em CY
+03DA: 3D      	        DEC A        ; Decrementa contador    03DA 3D
+03DB: 20F5    	        JR NZ, LOOP16; Se nao terminou, volta 03DB 20 F5
+03DD: D5      	        PUSH DE      ; Salva 2 BYTES menos    03DD D5
+              	                     ; significativos do num.
+03DE: E5      	        PUSH HL      ; Salva 2 BYTES mais     03DE E5
+              	                     ; significativos do num.
+03DF: 01FFFF  	        LD BC, 0FFFFH; Primeira aproximacao   03DF 01 FF FF
+              	                     ; do resultado
+03E2: AF      	        XOR A        ; Limpa o Carry e ACC    03E2 AF
+03E3: B4      	        OR H         ;                        03E3 B4
+03E4: B5      	        OR L         ;                        03E4 B5
+03E5: B2      	        OR D         ;                        03E5 B2
+03E6: B3      	        OR E         ; Verifica se o num. a   03E6 B3
+              	                     ; ser calculada a rais
+              	                     ; e' zero
+03E7: C2EF03  	        JP NZ, PULA14; Se nao e' zero,        03E7 C2 EF 03
+              	                     ; calcula raiz
+03EA: 03      	        INC BC       ; Faz BC = zero          03EA 03
+03EB: E1      	        POP HL       ;                        03EB E1
+03EC: D1      	        POP DE       ; Recupera posicao do    03EC D1
+              	                     ; STACK POINTER
+03ED: C9      	        RET          ; Fim, se a raiz e' zero 03ED C9
+03EE: 00      	        NOP          ;                        03EE 00
+03EF: 37      	PULA14: SCF          ; Faz CY = 1             03EF 37
+03F0: CB18    	LOOP17: RR B         ; CY para BIT 7 de B e   03F0 CB 18
+              	                     ; BIT 0 de B para CY
+03F2: CB19    	        RR C         ; CY para BIT 7 de C     03F2 CB 19
+              	                     ; Abaixo, verifica
+              	                     ; quantos BITS tem o
+              	                     ; numero:
+03F4: EB      	        EX DE, HL    ;                        03F4 EB
+              	
+              	;--------------------;  95 DEEL/UFRJ
+              	
+03F5: 29      	        ADD HL, HL   ;                        03F5 29
+03F6: EB      	        EX DE, HL    ;                        03F6 EB
+03F7: ED6A    	        ADC HL, HL   ; HLDE vezes 2           03F7 ED 6A
+03F9: DA0404  	        JP C, LOOP18 ; Se qtd. de BITS par,   03F9 DA 04 04
+              	                     ; pula
+03FC: EB      	        EX DE, HL    ;                        03FC EB
+03FD: 29      	        ADD HL, HL   ;                        03FD 29
+03FE: EB      	        EX DE, HL    ;                        03FE EB
+03FF: ED6A    	        ADC HL, HL   ; HLDE vezes 2           03FF ED 6A
+0401: D2F003  	        JP NC, LOOP17; Se qtd. de BITS nao    0401 D2 F0 03
+              	                     ; encontrada, volta
+0404: E1      	LOOP18: POP HL       ; Recupera numero em     0404 E1
+0405: D1      	        POP DE       ; HLDE, em BC tem a      0405 D1
+              	                     ; Primeira aproximacao
+              	                     ; do resultado
+0406: D5      	        PUSH DE      ;                        0406 D5
+0407: E5      	        PUSH HL      ; Salva num. para        0407 E5
+              	                     ; proxima iteracao
+0408: CD5903  	        CALL DIVIDE  ; Divide numero pela     0408 CD 59 03
+              	                     ; aproximacao atual
+040B: EB      	        EX DE, HL    ; Coloca resultado da    040B EB
+              	                     ; divisao em HL
+040C: 09      	        ADD HL, BC   ; Soma com a aproximacao 040C 09
+              	                     ; atual
+040D: EB      	        EX DE, HL    ; Coloca a soma em DE    040D EB
+040E: CB3A    	        SRL D        ; Divide por 2. Tem-se   040E CB 3A
+0410: CB1B    	        RR E         ; agora nova aproximacao 0410 CB 1B
+              	                     ; da raiz e DE
+0412: 60      	        LD H, B      ; Coloca a aproximacao   0412 60
+              	
+              	;--------------------;  96 DEEL/UFRJ
+              	
+0413: 69      	        LD L, C      ; anterior em HL         0413 69
+0414: 42      	        LD B, D      ; Coloca a aproximacao   0414 42
+0415: 4B      	        LD C, E      ; atual em BC            0415 4B
+              	                     ;
+0416: B7      	        OR A         ; Limpa Carry            0416 B7
+0417: ED52    	        SBC HL, DE   ; Aproximacao anterior   0417 ED 52
+              	                     ; menos a atual
+0419: CA2304  	        JP Z, PULA15 ; Se igual, pula         0419 CA 23 04
+041C: 19      	        ADD HL, DE   ; Recupera a aproximacao 041C 19
+              	                     ; anterior
+              	                     ; A aproximacao atual
+              	                     ; esta' em DE e tambem
+              	                     ; em BC
+041D: 13      	        INC DE       ; Incrementa aproximacao 041D 13
+              	                     ; atual em DE
+041E: ED52    	        SBC HL, DE   ; Aproximacao anterior   041E ED 52
+              	                     ; - aproximacao atual
+0420: C20404  	        JP NZ, LOOP18; Se a aproximacao atual 0420 C2 04 04
+              	                     ; nao satisfaz, volta e
+              	                     ; faz nova iteracao
+0423: E1      	PULA15: POP HL       ;                        0423 E1
+0424: D1      	        POP DE       ; Recupera posicao do    0424 D1
+              	                     ; STACK POINTER
+0425: CB21    	        SLA C        ; Multiplica a raiz por  0425 CB 21
+0427: CB10    	        RL B         ; 2, ja que o numero foi 0427 CB 10
+              	                     ; dividido por 4
+0429: C9      	        RET          ; Fim. A raiz esta em BC 0429 C9
+              	
+              	;--------------------;
+042A: FFFFFFFF	        DS 6         ; Area nao utilizada     042A FF FF FF FF
+042E: FFFF    	
+              	                     ; 6 BYTES
+              	;--------------------;  97 DEEL/UFRJ
+              	
+              	        ; Calcula o modulo de  cada harmonico
+              	        ; com 16 BITS (uint16_t) e armazena
+              	        ; nas paginas 6 e 7 da RAM,
+              	        ; 256 valores
+0430: 3E01    	MODULO: LD A, 1      ; Primeiro modulo a ser  0430 3E 01
+              	                     ; calculado e' do
+              	                     ; primeiro harmonico
+0432: 324C10  	LOOP19: LD (GC), A   ; Salva o contador       0432 32 4C 10
+0435: 6F      	        LD L, A      ; Coloca o contador em   0435 6F
+0436: 2600    	        LD H, 0      ; HL                     0436 26 00
+0438: 29      	        ADD HL, HL   ; Dobra contador porque  0438 29
+              	                     ; o resultado e' com
+              	                     ; 2 BYTES
+0439: 118011  	        LD DE, MI    ; End. destino do BUFFER 0439 11 80 11
+              	                     ; temporario do modulo
+043C: 19      	        ADD HL, DE   ; HL aponta p/ end.      043C 19
+              	                     ; temporario do modulo
+043D: 224D10  	        LD (GMI), HL ; Salva endereco         043D 22 4D 10
+0440: B7      	        OR A         ; Limpa Carry            0440 B7
+0441: ED52    	        SBC HL, DE   ; Recupera contador      0441 ED 52
+              	                     ; dobrado
+0443: 29      	        ADD HL, HL   ; Dobra contador         0443 29
+              	                     ; novamente porque o
+              	                     ; dado fonte e' de
+              	                     ; 4 BYTES
+0444: 010208  	        LD BC, AI + 2; BC aponta para a parte 0444 01 02 08
+              	                     ; inteira de A(0)
+0447: 09      	        ADD HL, BC   ; HL aponta para a parte 0447 09
+              	                     ; inteira de A(I)
+0448: 223F10  	        LD (GAI), HL ; Salva end. de A(I)     0448 22 3F 10
+044B: 010004  	        LD BC, 1024  ; B(I) esta' 1024 BYTES  044B 01 00 04
+              	                     ; depois de A(I)
+044E: 09      	        ADD HL, BC   ; HL aponta para a parte 044E 09
+              	                     ; inteira de B(I)
+044F: 5E      	        LD E, (HL)   ;                        044F 5E
+0450: 23      	        INC HL       ;                        0450 23
+              	
+              	;--------------------;  98 DEEL/UFRJ
+              	
+0451: 56      	        LD D, (HL)   ; Coloca B(I) em DE      0451 56
+0452: 210000  	        LD HL, 0     ; Limpa HL               0452 21 00 00
+0455: B7      	        OR A         ; Limpa CY               0455 B7
+0456: ED52    	        SBC HL, DE   ; HL = -B(I)             0456 ED 52
+0458: FA5C04  	        JP M, PULA16 ; Se -B(I) e' negativo,  0458 FA 5C 04
+              	                     ; o modulo de B(I) esta'
+              	                     ; em DE, entao pula
+045B: EB      	        EX DE, HL    ; Sendo -(B(I) positivo, 045B EB
+              	                     ; entao o modulo que
+              	                     ; esta' em HL entao
+              	                     ; transfere o para DE
+045C: 42      	PULA16: LD B, D      ;Coloca no multiplicando 045C 42
+045D: 4B      	        LD C, E      ; o multiplicador        045D 4B
+045E: CD4203  	        CALL MULTIP  ; Faz B(I)^2 em DEHL     045E CD 42 03
+0461: D5      	        PUSH DE      ; Salva B(I)^2 na STACK  0461 D5
+0462: E5      	        PUSH HL      ;                        0462 E5
+0463: 2A3F10  	        LD HL, (GAI) ; Recupera end. da parte 0463 2A 3F 10
+              	                     ; inteira de A(I)
+0466: 5E      	        LD E, (HL)   ;                        0466 5E
+0467: 23      	        INC HL       ;                        0467 23
+0468: 56      	        LD D, (HL)   ; Coloca A(I) em DE      0468 56
+              	                     ;
+0469: 210000  	        LD HL, 0     ; Mesmos comentarios     0469 21 00 00
+              	                     ; de B(I) para A(I)
+046C: B7      	        OR A         ;                        046C B7
+046D: ED52    	        SBC HL, DE   ;                        046D ED 52
+046F: FA7304  	        JP M, PULA17 ;                        046F FA 73 04
+0472: EB      	        EX DE, HL    ;                        0472 EB
+0473: 42      	PULA17: LD B, D      ;                        0473 42
+0474: 4B      	        LD C, E      ;                        0474 4B
+0475: CD4203  	        CALL MULTIP  ; Faz A(I)^2 em DEHL     0475 CD 42 03
+              	
+              	;--------------------;  99 DEEL/UFRJ
+              	
+0478: C1      	        POP BC       ; Recupera os 2 BYTES    0478 C1
+              	                     ; menos significativos
+              	                     ; de B(I)^2
+0479: 09      	        ADD HL, BC   ; Soma os 2 LSBYTES de   0479 09
+              	                     ; B(I)^2 como os
+              	                     ; 2 LSBYTES de A(I)^2
+047A: EB      	        EX DE, HL    ; Salva soma em DE e     047A EB
+              	                     ; coloca os 2 MSBYTES de
+              	                     ; A(I)^2 em HL
+047B: C1      	        POP BC       ; Recupera os 2 MSBYTES  047B C1
+              	                     ; de B(I)^2
+047C: ED4A    	        ADC HL, BC   ; Soma os 2 MSBYTES de   047C ED 4A
+              	                     ; B(I)^2 com os
+              	                     ; 2 MSBYTES de A(I) e
+              	                     ; com CY anterior
+047E: CDD003  	        CALL RAIZ    ; Calcula raiz quadrada  047E CD D0 03
+              	                     ; sqr((A(I)^2)+(B(I)^2))
+              	                     ; e coloca resultado em
+              	                     ; BC
+0481: 3A0310  	        LD A, (GM +1); Coloca M em ACC        0481 3A 03 10
+0484: ED44    	        NEG          ; -M em ACC              0484 ED 44
+0486: C609    	        ADD A, 9     ; 9 - M em ACC           0486 C6 09
+              	                     ; O loop abaixo faz:
+              	                     ; M(I) = (sqr((A(I)^2) +
+              	                     ; (B(I)^2))) * 2 / N,
+              	                     ; assumindo que os BYTES
+              	                   ; em B = parte inteira e
+              	                   ; em C = parte fracionaria
+0488: CB21    	LOOP20: SLA C        ;                        0488 CB 21
+048A: CB10    	        RL B         ; BC vezes 2             048A CB 10
+048C: 3D      	        DEC A        ; Decrementa contador    048C 3D
+048D: 20F9    	        JR NZ, LOOP20; Se nao terminou, volta 048D 20 F9
+048F: 2A4D10  	        LD HL, (GMI) ; Recupera end. destino  048F 2A 4D 10
+              	                     ; do BUFFER temporario
+0492: 71      	        LD (HL), C   ;                        0492 71
+0493: 23      	        INC HL       ;                        0493 23
+              	
+              	;--------------------; 100 DELL/UFRJ
+              	
+0494: 70      	        LD (HL), B   ; Coloca modulo M(I) no  0494 70
+              	                     ; BUFFER temporario
+0495: 3A4C10  	        LD A, (GC)   ; Recupera contador      0495 3A 4C 10
+0498: 3C      	        INC A        ; Incrementa contador    0498 3C
+0499: 210010  	        LD HL, GN    ;                        0499 21 00 10
+049C: BE      	        CP (HL)      ; Compara contador com N 049C BE
+049D: C23204  	        JP NZ, LOOP19; Se nao acabou, volta   049D C2 32 04
+04A0: 2A0208  	        LD HL, (AI+2); Recupera a parte       04A0 2A 02 08
+              	                     ; inteira de A(0)
+04A3: 3A0310  	        LD A, (GM +1); M em ACC               04A3 3A 03 10
+04A6: ED44    	        NEG          ; -M em ACC              04A6 ED 44
+04A8: C609    	        ADD A, 9     ; 9 - M em ACC           04A8 C6 09
+              	                     ; O trecho abaixo faz
+              	                     ; M(0) = A(0) / N,
+              	                     ; assumindo que o BYTE
+              	                     ; em L e' parte
+              	                     ; fracionaria:
+04AA: CB3C    	        SRL H        ; Divide A(0) por 2      04AA CB 3C
+04AC: CB1D    	        RR L         ;                        04AC CB 1D
+04AE: CB25    	LOOP21: SLA L        ; Multiplica A(0) por 2  04AE CB 25
+04B0: CB14    	        RL H         ;                        04B0 CB 14
+04B2: 3D      	        DEC A        ; Decrementa contador    04B2 3D
+04B3: 20F9    	        JR NZ, LOOP21; Se nao terminou, volta 04B3 20 F9
+04B5: 010080  	        LD BC, 8000H ; Recupera nivel DC que  04B5 01 00 80
+              	                     ; foi subtraido antes do
+              	                     ; calculo da FFT
+04B8: 09      	        ADD HL, BC   ; Restaura nivel DC      04B8 09
+              	                     ; original do sinal
+04B9: 228011  	        LD (MI), HL  ; Guarda M(0)            04B9 22 80 11
+04BC: 2A0010  	        LD HL, (GN)  ; Recupera N             04BC 2A 00 10
+04BF: 018111  	        LD BC, MI + 1; BC aponta para BYTE    04BF 01 81 11
+              	                     ; mais significativo de
+              	                     ; M(0)
+              	
+              	;--------------------; 101 DELL/UFRJ
+              	
+04C2: 09      	        ADD HL, BC   ; HL aponta para BYTE    04C2 09
+              	                     ; mais significativo de
+              	                     ; M(N/2)
+04C3: CB3E    	        SRL (HL)     ;                        04C3 CB 3E
+04C5: 2B      	        DEC HL       ;                        04C5 2B
+04C6: CB1E    	        RR (HL)      ; Divide M(N/2) por 2    04C6 CB 1E
+04C8: 010002  	        LD BC, 512   ; Qtd. de BYTES a        04C8 01 00 02
+              	                     ; transferir
+04CB: 11000E  	        LD DE, MI16  ; End. destino           04CB 11 00 0E
+              	                     ; definitivo do modulo
+              	                     ; em 16 BITS
+04CE: 218011  	        LD HL, MI    ; End. temporario do     04CE 21 80 11
+              	                     ; modulo em 16 BITS
+04D1: EDB0    	        LDIR         ; Transfere 512 BYTES    04D1 ED B0
+04D3: C9      	        RET          ; Fim. O modulo da FFT   04D3 C9
+              	                     ; se encontra armazenado
+              	                     ; nos enderecos
+              	                     ; de DE00H a 0FFFFH,
+              	                     ; para modificacoes
+              	                     ; posteriores, como
+              	                     ; apresentacao dos
+              	                     ; resultados em dB
+              	
+              	;--------------------;
+              	
+              	        ; Esta subrotina representa o
+              	        ; modulo com 8 BITS arredondado e
+              	        ; coloca na area de memoria]
+              	        ; de 1180H a 127FH e repete na area
+              	        ; de 0800H a 08FFH, acende tambem o
+              	        ; DISPLAY com letra 'F'
+04D4: 21000E  	TRANSF: LD HL, MI16  ; End. do odulo com      04D4 21 00 0E
+              	                     ; 16 BITS
+04D7: 118011  	        LD DE, MI8   ; End. do modulo a ser   04D7 11 80 11
+              	                     ; armazenado com 8 BITS
+04DA: ED4B0010	        LD BC, (GN)  ; Qtd. de pontos a serem 04DA ED 4B 00 10
+              	                     ; transferidos
+04DE: 7E      	LOOP22: LD A, (HL)   ; BYTE menos             04DE 7E
+              	                     ; significativo de M(I)
+              	
+              	;--------------------; 102 DELL/UFRJ
+              	
+04DF: 87      	        ADD A, A     ; Se BIT mais            04DF 87
+              	                     ; significativo e' 1,
+              	                     ; entao ha' Carry
+04E0: 23      	        INC HL       ; Aponta para BYTE mais  04E0 23
+              	                     ; significativo de M(I)
+04E1: 7E      	        LD A, (HL)   ; Pego BYTE mais         04E1 7E
+              	                     ; significativo
+04E2: 3001    	        JR NC, PULA18; Se BIT mais            04E2 30 01
+              	                     ; significativo do BYTE
+              	                     ; menos significativo de
+              	                     ; M(I) e' zero, pula
+04E4: 3C      	        INC A        ; Incrementa BYTE mais   04E4 3C
+              	                     ; significativo
+04E5: 12      	PULA18: LD (DE), A   ; Salva modulo           04E5 12
+              	                     ; arredondado com 8 BITS
+              	                     ; no novo endereco
+04E6: 13      	        INC DE       ; Aponta para proximo    04E6 13
+              	                     ; end. destino
+04E7: 23      	        INC HL       ; Aponta para BYTE menos 04E7 23
+              	                     ; significativo do
+              	                     ; proximo modulo em
+              	                     ; 16 BITS
+04E8: 0D      	        DEC C        ; Decrementa contador    04E8 0D
+04E9: C2DE04  	        JP NZ, LOOP22; Se nao terminou, volta 04E9 C2 DE 04
+04EC: 010001  	        LD BC, 256   ; Qtd. de BYTE a serem   04EC 01 00 01
+              	                     ; copiados
+04EF: 110008  	        LD DE, 0800H ; End. da pagina zero da 04EF 11 00 08
+              	                     ; RAM
+04F2: 218011  	        LD HL, MI8   ; End. onde estao        04F2 21 80 11
+              	                     ; armazenados os modulos
+              	                     ; do espectro
+04F5: EDB0    	        LDIR         ; Copia os modulos com   04F5 ED B0
+              	                     ; 8 BITS na pagina zero
+              	                     ; da RAM
+04F7: 3E71    	        LD A, 71H    ; Codigo da letra 'F' no 04F7 3E 71
+              	                     ; DISPLAY
+              	
+              	;--------------------; 103 DELL/UFRJ
+              	
+04F9: 320038  	        LD (DISPL), A; Acende DISPLAY com 'F' 04F9 32 00 38
+              	                     ; indicando que o que
+              	                     ; esta' na pagina zero
+              	                     ; da RAM e' o espectro
+04FC: C9      	        RET          ; Fim.                   04FC C9
+              	
+              	;--------------------;
+04FD:         	FIM:                 ; Fim do programa.       04FD
+              	;--------------------;
+04FD: FFFFFFFF	        DS 0183H     ; Area nao utilizada     04FD FF FF FF FF
+0501: FF...   	
+              	                     ; 387 BYTES
+              	;--------------------; 104 DEEL/UFRJ
+              	
+              	        ORG 0680H    ; Inicio da tabela de seno
+              	;
+0680:         	TABSEN:              ; PI = 3,141592654
+              	;
+              	; Tabela de seno e cosseno multiplicados por 32767 (uint15_t),
+              	; ([0 .. 270 graus)), bit 15 representa o sinal, fim da EPROM
+              	;
+0680: 00002403	    DW  0000H,  0324H,  0648H,  096BH ; 0680 0000 2403 4806 6B09
+0684: 48066B09	
+0688: 8C0CAB0F	    DW  0C8CH,  0FABH,  12C8H,  15E2H ; 0688 8C0C AB0F C812 E215
+068C: C812E215	
+0690: F9180C1C	    DW  18F9H,  1C0CH,  1F1AH,  2224H ; 0690 F918 0C1C 1A1F 2422   Erro no .pdf
+0694: 1A1F2422	
+0698: 28252728	    DW  2528H,  2827H,  2B1FH,  2E11H ; 0698 2825 2728 1F2B 112E
+069C: 1F2B112E	
+06A0: FC30DF33	    DW  30FCH,  33DFH,  36BAH,  398DH ; 06A0 FC30 DF33 BA36 8D39
+06A4: BA368D39	
+06A8: 573C173F	    DW  3C57H,  3F17H,  41CEH,  447BH ; 06A8 573C 173F CE41 7B44
+06AC: CE417B44	
+06B0: 1D47B449	    DW  471DH,  49B4H,  4C40H,  4EC0H ; 06B0 1D47 B449 404C C04E
+06B4: 404CC04E	
+06B8: 34519B53	    DW  5134H,  539BH,  55F6H,  5843H ; 06B8 3451 9B53 F655 4358
+06BC: F6554358	
+06C0: 825AB45C	    DW  5A82H,  5CB4H,  5ED7H,  60ECH ; 06C0 825A B45C D75E EC60
+06C4: D75EEC60	
+06C8: F262E964	    DW  62F2H,  64E9H,  66D0H,  68A7H ; 06C8 F262 E964 D066 A768
+06CC: D066A768	
+06D0: 6E6A246C	    DW  6A6EH,  6C24H,  6DCAH,  6F5FH ; 06D0 6E6A 246C CA6D 5F6F
+06D4: CA6D5F6F	
+06D8: E3705572	    DW  70E3H,  7255H,  73B6H,  7505H ; 06D8 E370 5572 B673 0575
+06DC: B6730575	
+06E0: 42766C77	    DW  7642H,  776CH,  7885H,  798AH ; 06E0 4276 6C77 8578 8A79
+06E4: 85788A79	
+06E8: 7D7A5D7B	    DW  7A7DH,  7B5DH,  7C2AH,  7CE4H ; 06E8 7D7A 5D7B 2A7C E47C
+06EC: 2A7CE47C	
+06F0: 8A7D1E7E	    DW  7D8AH,  7E1EH,  7E9DH,  7F0AH ; 06F0 8A7D 1E7E 9D7E 0A7F
+06F4: 9D7E0A7F	
+06F8: 627FA77F	    DW  7F62H,  7FA7H,  7FD9H,  7FF6H ; 06F8 627F A77F D97F F67F
+06FC: D97FF67F	
+0700: FF7FF67F	    DW  7FFFH,  7FF6H,  7FD9H,  7FA7H ; 0700 FF7F F67F D97F A77F   Erro no .pdf
+0704: D97FA77F	
+0708: 627F0A7F	    DW  7F62H,  7F0AH,  7E9DH,  7E1EH ; 0708 627F 0A7F 9D7E 1E7E
+070C: 9D7E1E7E	
+0710: 8A7DE47C	    DW  7D8AH,  7CE4H,  7C2AH,  7B5DH ; 0710 8A7D E47C 2A7C 5D7B
+0714: 2A7C5D7B	
+0718: 7D7A8A79	    DW  7A7DH,  798AH,  7885H,  776CH ; 0718 7D7A 8A79 8578 6C77
+071C: 85786C77	
+0720: 42760575	    DW  7642H,  7505H,  73B6H,  7255H ; 0720 4276 0575 B673 5572
+0724: B6735572	
+0728: E3705F6F	    DW  70E3H,  6F5FH,  6DCAH,  6C24H ; 0728 E370 5F6F CA6D 246C
+072C: CA6D246C	
+0730: 6E6AA768	    DW  6A6EH,  68A7H,  66D0H,  64E9H ; 0730 6E6A A768 D066 E964
+0734: D066E964	
+0738: F262EC60	    DW  62F2H,  60ECH,  5ED7H,  5CB4H ; 0738 F262 EC60 D75E B45C
+073C: D75EB45C	
+0740: 825A4358	    DW  5A82H,  5843H,  55F6H,  539BH ; 0740 825A 4358 F655 9B53
+0744: F6559B53	
+0748: 3451C04E	    DW  5134H,  4EC0H,  4C40H,  49B4H ; 0748 3451 C04E 404C B449
+074C: 404CB449	
+0750: 1D477B44	    DW  471DH,  447BH,  41CEH,  3F17H ; 0750 1D47 7B44 CE41 173F
+0754: CE41173F	
+0758: 573C8D39	    DW  3C57H,  398DH,  36BAH,  33DFH ; 0758 573C 8D39 BA36 DF33
+075C: BA36DF33	
+0760: FC30112E	    DW  30FCH,  2E11H,  2B1FH,  2827H ; 0760 FC30 112E 1F2B 2728
+0764: 1F2B2728	
+0768: 28252422	    DW  2528H,  2224H,  1F1AH,  1C0CH ; 0768 2825 2422 1A1F 0C1C   Erro no .pdf
+076C: 1A1F0C1C	
+0770: F918E215	    DW  18F9H,  15E2H,  12C8H,  0FABH ; 0770 F918 E215 C812 AB0F
+0774: C812AB0F	
+0778: 8C0C6B09	    DW  0C8CH,  096BH,  0648H,  0324H ; 0778 8C0C 6B09 4806 2403
+077C: 48062403	
+0780: 00002483	    DW  0000H,  8324H,  8648H,  896BH ; 0780 0000 2483 4886 6B89
+0784: 48866B89	
+0788: 8C8CAB8F	    DW  8C8CH,  8FABH,  92C8H,  95E2H ; 0788 8C8C AB8F C892 E295
+078C: C892E295	
+0790: F9980C9C	    DW  98F9H,  9C0CH,  9F1AH, 0A224H ; 0790 F998 0C9C 1A9F 24A2
+0794: 1A9F24A2	
+              	
+              	;-------------------------------------; 105 DEEL/UFRJ
+              	
+0798: 28A527A8	    DW 0A528H, 0A827H, 0AB1FH, 0AE11H ; 0798 28A5 27A8 1FAB 11AE
+079C: 1FAB11AE	
+07A0: FCB0DFB3	    DW 0B0FCH, 0B3DFH, 0B6BAH, 0B98DH ; 07A0 FCB0 DFB3 BAB6 8DB9
+07A4: BAB68DB9	
+07A8: 57BC17BF	    DW 0BC57H, 0BF17H, 0C1CEH, 0C47BH ; 07A8 57BC 17BF CEC1 7BC4
+07AC: CEC17BC4	
+07B0: 1DC7B4C9	    DW 0C71DH, 0C9B4H, 0CC40H, 0CEC0H ; 07B0 1DC7 B4C9 40CC C0CE
+07B4: 40CCC0CE	
+07B8: 34D19BD3	    DW 0D134H, 0D39BH, 0D5F6H, 0D843H ; 07B8 34D1 9BD3 F6D5 43D8
+07BC: F6D543D8	
+07C0: 82DAB4DC	    DW 0DA82H, 0DCB4H, 0DED7H, 0E0ECH ; 07C0 82DA B4DC D7DE ECE0
+07C4: D7DEECE0	
+07C8: F2E2E9E4	    DW 0E2F2H, 0E4E9H, 0E6D0H, 0E8A7H ; 07C8 F2E2 E9E4 D0E6 A7E8
+07CC: D0E6A7E8	
+07D0: 6EEA24EC	    DW 0EA6EH, 0EC24H, 0EDCAH, 0EF5FH ; 07D0 6EEA 24EC CAED 5FEF
+07D4: CAED5FEF	
+07D8: E3F055F2	    DW 0F0E3H, 0F255H, 0F3B6H, 0F505H ; 07D8 E3F0 55F2 B6F3 05F5
+07DC: B6F305F5	
+07E0: 42F66CF7	    DW 0F642H, 0F76CH, 0F885H, 0F98AH ; 07E0 42F6 6CF7 85F8 8AF9
+07E4: 85F88AF9	
+07E8: 7DFA5DFB	    DW 0FA7DH, 0FB5DH, 0FC2AH, 0FCE4H ; 07E8 7DFA 5DFB 2AFC E4FC
+07EC: 2AFCE4FC	
+07F0: 8AFD1EFE	    DW 0FD8AH, 0FE1EH, 0FE9DH, 0FF0AH ; 07F0 8AFD 1EFE 9DFE 0AFF
+07F4: 9DFE0AFF	
+07F8: 62FFA7FF	    DW 0FF62H, 0FFA7H, 0FFD9H, 0FFF6H ; 07F8 62FF A7FF D9FF F6FF
+07FC: D9FFF6FF	
+              	;
+              	; Fim da tabela de seno em 07FF
+              	;
+              	;--------------------------------------------------------------
+              	;
+              	;--------------------;  69 DEEL/UFRJ
+              	;
+              	;      ENDERECOS DAS VARIAVEIS:
+              	;
+              	;      Na 1a coluna esta o endereco em hexadecimal; na 2a coluna,
+              	; o nome da variavel; na 3a coluna, o numero de BYTES da   varia-
+              	; vel.
+              	;
+              	;      Para maior compreensao muitas variaveis tem o mesmo   nome
+              	; das do programa em BASIC, sendo referida ao BASIC, quando for o
+              	; caso.
+              	;
+0800: FFFFFFFF	         ORG 1000H
+0804: FF...   	
+              	;
+              	; VARIAVEL  BYTES    ; ENDERECO  COMENTARIO
+1000: FFFF    	GN:         DS 2     ; 1000H     N   , BASIC
+1002: FFFF    	GM:         DS 2     ; 1002H     M   , BASIC
+1004: FFFF    	            DS 2     ; 1004H
+1006: FF      	GK:         DS 1     ; 1006H     K   , BASIC
+1007: FF      	GK1:        DS 1     ; 1007H     K1  , BASIC
+1008: FFFF    	GK2:        DS 2     ; 1008H     K2  , BASIC
+100A: FF      	GK3:        DS 1     ; 100AH     K3  , BASIC
+100B: FF      	GP:         DS 1     ; 100BH     P   , BASIC
+100C: FF      	GS:         DS 1     ; 100CH     S   , BASIC
+100D: FFFF    	Y1:         DS 2     ; 100DH     Y1  , BASIC
+100F: FFFF    	X1:         DS 2     ; 100FH     X1  , BASIC
+1011: FF      	GJ:         DS 1     ; 1011H     J   , BASIC
+1012: FFFF    	AK4:        DS 2     ; 1012H     Endereco de A(K4), BASIC
+1014: FFFF    	AK5:        DS 2     ; 1014H     Endereco de A(K5), BASIC
+1016: FFFF    	BK4:        DS 2     ; 1016H     Endereco de B(K4), BASIC
+1018: FFFF    	BK5:        DS 2     ; 1018H     Endereco de B(K5), BASIC
+101A: FFFFFFFF	MULT:       DS 4     ; 101AH     MultiplicandO
+101E: FFFFFFFF	C1:         DS 4     ; 101EH     X1 . A(K5)
+1022: FFFFFFFF	C2:         DS 4     ; 1022H     Y1 . B(K5)
+1026: FFFFFFFF	C3:         DS 4     ; 1026H     Y1 . A(K5)
+102A: FFFFFFFF	C4:         DS 4     ; 102AH     X1 . B(K5)
+102E: FFFFFFFF	MUL:        DS 4     ; 102EH     Resultado da multiplicacao
+              	                     ;           Renomeado de RES para MUL
+              	
+              	;--------------------;  70 DEEL/UFRJ
+              	
+1032: FFFFFFFF	X2:         DS 4     ; 1032H     X2  , BASIC
+1036: FFFFFFFF	Y2:         DS 4     ; 1036H     Y2  , BASIC
+103A: FF      	GI:         DS 1     ; 103AH     I   , BASIC
+103B: FFFF    	GAS:        DS 2     ; 103BH     Endereco de A(S), BASIC
+103D: FFFF    	GBS:        DS 2     ; 103DH     Endereco de B(S), BASIC
+103F: FFFF    	GAI:        DS 2     ; 103FH     Endereco de A(I), BASIC
+1041: FFFF    	GBI:        DS 2     ; 1041H     Endereco de B(I), BASIC
+1043: FFFFFFFF	X3:         DS 4     ; 1043H     X3  , BASIC
+1047: FFFFFFFF	Y3:         DS 4     ; 1047H     Y3  , BASIC
+104B: FF      	            DS 1     ; 104BH
+104C: FF      	GC:         DS 1     ; 104CH     Contador da sub-rotina de
+              	                     ;           raiz quadrada
+104D: FFFF    	GMI:        DS 2     ; 104DH     Endereco do modulo
+104F: FFFFFFFF	            DS 11H   ; 104FH
+1053: FF...   	
+1060: FF      	FLAG:       DS 1     ; 1060H     Indica se foi calculada a FFT
+1061: FF      	PAG:        DS 1     ; 1061H     Endereco relativo da tabela
+              	                     ;           do DISPLAY
+              	;
+              	;--------------------------------------------------------------
+              	;
+              	        END          ; Fim do programa
+              	;
+              	;--------------------------------------------------------------
+
+
+; +++ segments +++
+
+#CODE          = $0000 =     0,  size = $1062 =  4194
+
+; +++ global symbols +++
+
+AI      = $0800 =  2048          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:65
+AK4     = $1012 =  4114          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1491
+AK5     = $1014 =  4116          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1492
+BI      = $0C00 =  3072          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:73 (unused)
+BINV1   = $0332 =   818          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:843
+BINV2   = $0337 =   823          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:846
+BK4     = $1016 =  4118          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1493
+BK5     = $1018 =  4120          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1494
+C1      = $101E =  4126          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1496
+C2      = $1022 =  4130          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1497
+C3      = $1026 =  4134          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1498
+C4      = $102A =  4138          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1499
+COMP    = $03B0 =   944          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:994
+DISPL   = $3800 = 14336          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:96
+DISPLAY = $00CD =   205          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:349
+DIVIDE  = $0359 =   857          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:885
+ESPERA  = $00DA =   218          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:365
+FFT     = $0100 =   256          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:403
+FIM     = $04FD =  1277          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1395 (unused)
+FIMINT  = $0043 =    67          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:195 (unused)
+FIMNMI  = $007A =   122          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:262 (unused)
+FLAG    = $1060 =  4192          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1519
+GAI     = $103F =  4159          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1510
+GAS     = $103B =  4155          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1508
+GBI     = $1041 =  4161          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1511
+GBS     = $103D =  4157          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1509
+GC      = $104C =  4172          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1515
+GI      = $103A =  4154          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1507
+GJ      = $1011 =  4113          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1490
+GK      = $1006 =  4102          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1482
+GK1     = $1007 =  4103          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1483
+GK2     = $1008 =  4104          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1484
+GK3     = $100A =  4106          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1485
+GM      = $1002 =  4098          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1480
+GMI     = $104D =  4173          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1517
+GN      = $1000 =  4096          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1479
+GP      = $100B =  4107          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1486
+GS      = $100C =  4108          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1487
+INICIO  = $0000 =     0          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:144 (unused)
+INT     = $0038 =    56          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:187 (unused)
+LOOP1   = $00DD =   221          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:368
+LOOP10  = $0313 =   787          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:804
+LOOP11  = $0324 =   804          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:827
+LOOP12  = $033A =   826          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:849
+LOOP13  = $0347 =   839          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:869
+LOOP14  = $035B =   859          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:886
+LOOP15  = $03C2 =   962          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1021
+LOOP16  = $03D2 =   978          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1049
+LOOP17  = $03F0 =  1008          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1084
+LOOP18  = $0404 =  1028          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1105
+LOOP19  = $0432 =  1074          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1166
+LOOP2   = $010C =   268          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:416
+LOOP20  = $0488 =  1160          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1260
+LOOP21  = $04AE =  1198          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1290
+LOOP22  = $04DE =  1246          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1344
+LOOP3   = $0133 =   307          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:451
+LOOP4   = $014C =   332          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:485
+LOOP5   = $0152 =   338          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:491
+LOOP6   = $0166 =   358          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:505
+LOOP7   = $016D =   365          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:513
+LOOP8   = $0192 =   402          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:549
+LOOP9   = $0287 =   647          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:712
+MAIS    = $0310 =   784          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:801
+MENOS   = $0321 =   801          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:824
+MI      = $1180 =  4480          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:90
+MI16    = $0E00 =  3584          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:77
+MI8     = $1180 =  4480          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:86
+MODULO  = $0430 =  1072          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1163
+MUL     = $102E =  4142          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1500
+MULT    = $101A =  4122          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1495
+MULTIP  = $0342 =   834          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:865
+NMI     = $0066 =   102          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:235 (unused)
+PAG     = $1061 =  4193          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1520
+PARE    = $0063 =    99          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:227
+PULA1   = $0045 =    69          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:196
+PULA10  = $0368 =   872          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:898
+PULA11  = $03A0 =   928          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:967
+PULA12  = $03A6 =   934          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:978
+PULA13  = $03CC =   972          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1033
+PULA14  = $03EF =  1007          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1083
+PULA15  = $0423 =  1059          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1146
+PULA16  = $045C =  1116          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1209
+PULA17  = $0473 =  1139          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1226
+PULA18  = $04E5 =  1253          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1362
+PULA2   = $0071 =   113          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:247
+PULA3   = $0074 =   116          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:250
+PULA4   = $00A7 =   167          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:303
+PULA5   = $00C4 =   196          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:336
+PULA6   = $013D =   317          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:461
+PULA7   = $013F =   319          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:463
+PULA8   = $02EC =   748          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:775
+PULA9   = $0354 =   852          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:877
+RAIZ    = $03D0 =   976          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1046
+ROT     = $0370 =   880          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:913
+TABSEN  = $0680 =  1664          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1403
+TDISP   = $00E3 =   227          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:382
+TRANSF  = $04D4 =  1236          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1338
+TROCA2  = $00AB =   171          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:309
+TROCA8  = $007C =   124          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:266
+X1      = $100F =  4111          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1489
+X2      = $1032 =  4146          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1505
+X3      = $1043 =  4163          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1512
+Y1      = $100D =  4109          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1488
+Y2      = $1036 =  4150          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1506
+Y3      = $1047 =  4167          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1513 (unused)
+_end    = $1062 =  4194          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:142 (unused)
+_size   = $1062 =  4194          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:142 (unused)
+_z80_   = $0001 =     1          UFRJ_FCL_1984_Analisador_de_Espectro_por_FFT.z80:1 (unused)
+
+
+total time: 0.0068 sec.
+no errors
